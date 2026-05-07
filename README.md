@@ -1,12 +1,8 @@
 # RELinvoicer
 
-RELinvoicer is a local web app that reads switchboard label drawings from DXF or PDF files and turns them into a clean spreadsheet-ready size list.
+RELinvoicer is a local web app for extracting switchboard label sizes from CAD label drawings.
 
-DXF is the preferred workflow because it contains real CAD geometry. PDF is kept as a fallback for older drawing exports.
-
-## What It Does
-
-Drop in a DXF drawing like an electrical switchboard label layout. RELinvoicer gives you one combined answer:
+It is built for a practical manufacturing workflow: drop in a DXF, click `Analyse`, then copy or export one clean table of label quantities and dimensions.
 
 ```text
 Quantity    Width X (mm)    Height Y (mm)
@@ -14,126 +10,181 @@ Quantity    Width X (mm)    Height Y (mm)
 1           250             15
 1           200             120
 1           160             90
-1           80              20
+2           80              20
 ```
 
-The goal is simple: save time, reduce retyping, and catch tricky shared-dimension cases.
+## Why It Exists
+
+Electrical switchboard label drawings often contain many small rectangles, shared dimensions, finish notes, engraving text, and quantity notes. Reading those drawings by eye is slow and easy to get wrong.
+
+RELinvoicer treats the CAD rectangles as the source of truth. This is the key improvement over image-only extraction: if two label boxes are the same size, the app follows the geometry of the boxes, not the position of nearby words.
+
+## Current Status
+
+DXF is the primary and recommended workflow.
+
+PDF remains available as a fallback for older exports. PDF analysis uses OpenAI vision, then checks CAD vector geometry when the PDF still contains usable vector rectangles.
+
+| Input | Recommended | Uses OpenAI | Notes |
+| --- | --- | --- | --- |
+| DXF | Yes | No | Reads CAD entities directly. Best accuracy. |
+| PDF | Fallback only | Yes | Useful when no DXF is available. Accuracy depends on drawing quality. |
+
+## Features
+
+- Drag-and-drop DXF or PDF upload
+- Thumbnail preview for uploaded pages or drawing sheets
+- One-click analysis with live status and elapsed time
+- DXF rectangle extraction from closed CAD polylines
+- DXF quantity extraction from nearby notes such as `2 OFF` and `QUANTITY: 4 ONLY`
+- Small label support, including sizes such as `16 x 8` and `16 x 16`
+- Shared-dimension handling based on rectangle geometry
+- Per-page re-analysis for PDF fallback runs
+- Remarks panel for inferred, corrected, or noteworthy results
+- Running total across the whole upload
+- Excel export with a totals row
+- TSV copy for spreadsheet paste, copying only numeric result rows
 
 ## Quick Start
 
-You need Node.js and an OpenAI API key.
+Install Node.js first. Then run these commands in PowerShell:
 
 ```powershell
 git clone https://github.com/goodrj/RELinvoicer.git
 cd RELinvoicer
-copy .env.example .env
-notepad .env
 npm install
 npm start
 ```
 
-In `.env`, replace the example key:
-
-```text
-OPENAI_API_KEY=sk-your-key-here
-```
-
-Then open:
+Open:
 
 ```text
 http://localhost:3192
 ```
 
-On Windows, you can also run:
+For DXF-only use, no OpenAI API key is required.
+
+For PDF fallback analysis, create `.env`:
+
+```powershell
+copy .env.example .env
+notepad .env
+```
+
+Add your key:
+
+```text
+OPENAI_API_KEY=sk-your-key-here
+```
+
+Then restart the app.
+
+On Windows, you can also start the app with:
 
 ```powershell
 .\start.ps1
 ```
 
-## How To Use It
+## Daily Use
 
-1. Drag a DXF or PDF onto the page, or click the upload box.
-2. Check the page thumbnails.
+1. Drag a DXF or PDF onto the upload area, or click the upload area and choose a file.
+2. Check that the preview appears.
 3. Click `Analyse`.
-4. Watch the live status and elapsed timer.
-5. Review the table of unique sizes.
-6. Check any analysis remarks.
-7. Copy the TSV results or export Excel.
+4. Watch the analysis status and elapsed timer.
+5. Review the final table and remarks.
+6. Click `Copy TSV` for spreadsheet paste, or `Export Excel` for an `.xlsx` file.
 
-If a page looks wrong, click `Re-analyse` on that page.
+## DXF Extraction Rules
 
-## How It Thinks
+The DXF path reads structured CAD data:
 
-For DXF files, the app reads real CAD entities directly:
+- Closed 4-point `LWPOLYLINE` entities are treated as possible label rectangles.
+- `DIMENSION` entities confirm that the rectangle sides match real labelled dimensions.
+- Rectangle geometry is the authority for width and height.
+- The larger dimension is always stored as `Width X`.
+- The smaller dimension is always stored as `Height Y`.
+- Duplicate sizes are grouped together.
+- Nearby quantity notes increase the quantity for that drawn rectangle.
 
-1. Closed `LWPOLYLINE` rectangles become label boxes.
-2. `DIMENSION` entities confirm the drawing is dimensioned in millimetres.
-3. The rectangle geometry becomes the source of truth.
+Supported quantity text includes:
 
-For PDF files, the app uses three checks, like three people checking the same drawing:
+```text
+2 OFF
+2 OFF EACH
+2 ONLY
+4 REQUIRED
+QTY: 3
+QUANTITY: 4 ONLY
+```
 
-1. Vision reads the page image.
-   It looks for dimension numbers outside the label rectangles.
+## PDF Fallback Rules
 
-2. A second AI audit checks suspicious thin-label cases.
-   This helps catch cases like a `15 mm` label accidentally borrowing the wrong long dimension.
+The PDF path is designed for CAD-exported PDFs where text may be vector outlines rather than selectable text.
 
-3. Geometry checks the actual CAD rectangles.
-   This is the important safety net. If the PDF contains vector rectangles, the backend compares their proportions and page scale against the AI result.
+- OpenAI vision reads dimension numbers from page images.
+- Text inside a label rectangle is treated as label content, not a dimension.
+- Small engraving values such as `5` or `10` are ignored where possible.
+- Finish notes such as `W-B`, `BLACK`, and `1 OFF` are ignored as dimensions.
+- CAD vector rectangle geometry is used to correct likely AI mistakes.
+- If two analysis runs disagree, the app shows both so the user can choose.
 
-That is why a thin label beside a `250 x 30` label can correctly become `250 x 15`, even if only `15` is printed above it.
+## Commands
 
-## Important Reading Rules
-
-- Text inside a rectangle is label content, not a dimension.
-- Dimension numbers outside rectangles are the important numbers.
-- Small values like `5 mm` or `10 mm` below labels are usually engraving specs.
-- Finish words like `1 OFF`, `W-B`, and `BLACK` are ignored.
-- The larger size is stored as `Width X`.
-- The smaller size is stored as `Height Y`.
-- Shared CAD dimensions are allowed when the rectangles line up.
-- Rectangle geometry wins over nearby annotation text when they disagree.
+```powershell
+npm install      # install dependencies
+npm start        # run the local app
+npm run check    # JavaScript syntax check
+npm run smoke    # start a test server and check /api/health
+```
 
 ## Project Map
 
 ```text
 RELinvoicer/
   public/
-    index.html       Browser layout
-    styles.css       Visual design
-    app.js           Upload, PDF preview, table, Excel export
+    index.html          Browser layout
+    styles.css          App styling
+    app.js              Upload flow, previews, table, copy, Excel export
   scripts/
-    smoke-test.mjs   Starts the server on a test port and checks /api/health
+    smoke-test.mjs      Health-check test runner
   docs/
-    USER_GUIDE.md       Plain-English user guide
+    USER_GUIDE.md       Plain-English operating guide
     HOW_IT_WORKS.md     Beginner-friendly technical explanation
+    DXF_RULES.md        DXF extraction assumptions and rules
+    VALIDATION.md       Sample drawing checks and expected outputs
     TROUBLESHOOTING.md  Common problems and fixes
-  server.js         Local API, DXF parser, OpenAI call, CAD geometry correction
-  start.ps1         Windows helper script
-  .env.example      Example settings
+  server.js             Local API, DXF parser, PDF fallback, OpenAI call
+  start.ps1             Windows helper script
+  .env.example          Example environment settings
 ```
 
-## Useful Commands
+## Documentation
 
-```powershell
-npm install      # install dependencies
-npm start        # run the app
-npm run check    # check JavaScript syntax
-npm run smoke    # start a test server and check it responds
-```
+- [User Guide](docs/USER_GUIDE.md)
+- [How It Works](docs/HOW_IT_WORKS.md)
+- [DXF Rules](docs/DXF_RULES.md)
+- [Validation Notes](docs/VALIDATION.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## Privacy
 
-Your OpenAI API key stays in `.env` on your machine. The browser does not receive the key.
+DXF analysis runs locally on your machine and does not use OpenAI.
 
-DXF files are analysed locally by the backend. No OpenAI call is used for DXF analysis.
+PDF fallback analysis sends rendered page images to OpenAI vision. Your OpenAI API key stays in `.env` on your machine and is never sent to the browser.
 
-PDF page images are sent to OpenAI for analysis. The original PDF bytes are also sent from the browser to the local backend so the backend can read CAD vector rectangles. They are not stored by this app.
+This app does not store uploaded drawings, exported spreadsheets, or analysis history.
 
-## More Help
+## Limits
 
-- User steps: [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
-- Technical explanation: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)
-- Problems and fixes: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security notes: [SECURITY.md](SECURITY.md)
+RELinvoicer is built around clean CAD label drawings. Results should still be reviewed before production use, especially if:
+
+- the drawing contains non-label rectangles with matching dimensions,
+- rectangles are not closed polylines in the DXF,
+- dimensions are missing or not represented as DXF `DIMENSION` entities,
+- the PDF is scanned, blurry, or heavily compressed,
+- labels are rotated or drawn in an unusual way.
+
+When in doubt, use DXF instead of PDF.

@@ -10,16 +10,19 @@ The browser never receives the API key. The local Node server reads it and sends
 
 ## Drawing Data
 
-This app does not save uploaded PDFs.
+This app does not save uploaded drawings.
 
 During analysis:
 
-- the browser renders page images,
-- the browser sends those images to the local backend,
-- the backend sends page images to OpenAI,
+- DXF files are sent from the browser to the local backend and analysed locally,
+- PDF files are rendered into page images by the browser,
+- PDF page images are sent from the browser to the local backend,
+- the backend sends PDF page images to OpenAI for vision analysis,
 - the backend reads PDF vector rectangles locally for geometry correction.
 
-Only run this app with drawings you are allowed to send to OpenAI.
+DXF analysis does not use OpenAI.
+
+Only use PDF fallback with drawings you are allowed to send to OpenAI.
 
 ## Reporting Problems
 

@@ -28,7 +28,8 @@ npm start
 http://localhost:3192
 ```
 
-3. Test with a real CAD-exported PDF.
+3. Test with a real DXF drawing.
+4. If you changed PDF fallback behavior, also test with a real CAD-exported PDF.
 
 ## Code Style
 
@@ -36,6 +37,8 @@ http://localhost:3192
 - Prefer clear names over clever names.
 - Add comments only around non-obvious logic.
 - Do not commit `.env`, API keys, logs, exported spreadsheets, or sample customer drawings.
+- Keep documentation plain enough for a new apprentice to understand.
+- Prefer DXF geometry as the authority when extraction rules disagree.
 
 ## Pull Request Checklist
 
@@ -43,4 +46,6 @@ http://localhost:3192
 - `npm run check` passes.
 - `npm run smoke` passes.
 - The README or docs are updated if behavior changes.
-- Any AI prompt change is tested with at least one real drawing.
+- DXF extraction changes are tested against representative real drawings.
+- Any AI prompt change is tested with at least one real PDF fallback drawing.
+- New assumptions are documented in `docs/DXF_RULES.md` or `docs/HOW_IT_WORKS.md`.

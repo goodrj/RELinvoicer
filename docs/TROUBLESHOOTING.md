@@ -22,14 +22,16 @@ Stop it:
 Stop-Process -Id 12345
 ```
 
-Replace `12345` with the number shown at the end of the `LISTENING` line.
+Replace `12345` with the number at the end of the `LISTENING` line.
 
 ## Missing API Key
 
-If the app says:
+DXF analysis does not need an OpenAI API key.
+
+PDF fallback analysis does need one. If the app says:
 
 ```text
-Add OPENAI_API_KEY to .env
+OPENAI_API_KEY is missing
 ```
 
 Create `.env`:
@@ -57,35 +59,61 @@ Ctrl + F5
 
 Browsers sometimes keep old JavaScript files in memory.
 
+## DXF Upload Has Missing Labels
+
+Check the drawing style:
+
+- Are the label boxes closed `LWPOLYLINE` rectangles?
+- Do the rectangle sides match `DIMENSION` values in the drawing?
+- Are the labels rotated or drawn as separate `LINE` entities?
+- Are very small labels dimensioned in the DXF?
+
+The app is intentionally conservative. It uses dimension matching so it does not count title blocks, tables, or unrelated boxes as labels.
+
+## DXF Quantity Looks Wrong
+
+The app reads nearby quantity text such as:
+
+```text
+2 OFF
+2 OFF EACH
+2 ONLY
+4 REQUIRED
+QTY: 3
+QUANTITY: 4 ONLY
+```
+
+If a quantity note is far away from the rectangle, inside another area, or written in a different format, the app may leave the rectangle as quantity `1`.
+
 ## PDF Upload Works But Analyse Fails
 
 Check these:
 
-- Is the OpenAI API key correct?
+- Is `OPENAI_API_KEY` present in `.env`?
 - Is the internet connected?
 - Is the PDF very large?
-- Did the terminal show an error?
+- Did the terminal show an OpenAI or network error?
 
-Run this to check the server:
+Run this to check the local server:
 
 ```powershell
 npm run smoke
 ```
 
-## Result Is Wrong
+## PDF Result Is Wrong
 
 Try:
 
 1. Click `Re-analyse` on the page.
 2. Read the analysis remarks.
-3. Check if the drawing is scanned or vector-based.
-4. Check if the rectangle edges are clean and aligned.
+3. Check whether the PDF is scanned or vector-based.
+4. Use the DXF version of the drawing if available.
 
-The geometry correction works best on CAD-exported PDFs with real vector rectangles.
+The PDF correction works best on CAD-exported PDFs with real vector rectangles.
 
 ## Excel Export Does Not Download
 
-Check if the browser blocked downloads. Try another browser if needed.
+Check whether the browser blocked downloads. Try another browser if needed.
 
 ## Clipboard Copy Does Nothing
 

@@ -1,7 +1,7 @@
 {
   "name": "relinvoicer",
   "version": "1.0.0",
-  "description": "Local AI-assisted switchboard label dimension extractor for CAD PDF drawings.",
+  "description": "Local DXF-first switchboard label dimension extractor with PDF vision fallback.",
   "private": true,
   "type": "module",
   "scripts": {

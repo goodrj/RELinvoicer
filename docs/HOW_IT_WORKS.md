@@ -1,27 +1,20 @@
 # How RELinvoicer Works
 
-This explanation is written for a beginner. No electrical or AI background is assumed.
+This explanation is written for a beginner. The app is small, but the problem is not: engineering drawings mix geometry, dimensions, label text, finish notes, and quantity notes.
 
-## The Big Idea
-
-The app is trying to answer one question:
+The app's job is to answer one question:
 
 ```text
-What rectangle sizes are on this drawing?
+What label sizes and quantities are in this drawing?
 ```
 
-For DXF files, it does that with CAD data:
+## The Main Idea
 
-1. Closed rectangle polylines.
-2. Dimension entities.
-3. Drawing units.
+The safest evidence is the CAD rectangle itself.
 
-For PDF files, it does that with two kinds of evidence:
+If a label box is drawn as `250 mm` wide and `15 mm` high, that geometry matters more than nearby words or the position of dimension text.
 
-1. The numbers printed on the drawing.
-2. The actual rectangle shapes inside the PDF.
-
-Using CAD data is better than reading a picture. That is why DXF is preferred.
+That is why DXF is the preferred workflow.
 
 ## DXF Path
 
@@ -29,80 +22,87 @@ DXF files are structured CAD files. They can contain real entities such as:
 
 - `LWPOLYLINE` for rectangles,
 - `DIMENSION` for measurements,
-- `TEXT` and `MTEXT` for label content.
+- `TEXT` and `MTEXT` for notes.
 
-RELinvoicer reads closed 4-point `LWPOLYLINE` shapes, checks them against `DIMENSION` values, and converts them into label sizes.
+The backend reads the DXF directly:
 
-It also looks for nearby quantity text, such as `2 OFF` or `QUANTITY: 4 ONLY`, and applies that quantity to the matching rectangle before grouping the final table.
+1. It finds closed 4-point `LWPOLYLINE` shapes.
+2. It checks whether their sides match nearby drawing `DIMENSION` values.
+3. It keeps rectangles that look like real label boxes.
+4. It reads nearby quantity notes such as `2 OFF` or `QUANTITY: 4 ONLY`.
+5. It groups identical sizes into one final table.
 
-For DXF, no AI vision is needed.
+No AI vision is needed for DXF files.
+
+## Why Dimension Matching Exists
+
+CAD drawings can contain borders, tables, title blocks, and construction lines. The app should not count those as labels.
+
+Dimension matching is a filter. A rectangle is trusted when its sides match values that the drawing itself marks as dimensions.
+
+This helps the app include small real labels, such as `16 x 8`, while ignoring unrelated boxes.
+
+## Quantity Handling
+
+A drawn rectangle normally counts as quantity `1`.
+
+If nearby text says something like `2 OFF`, the rectangle counts as quantity `2`.
+
+Then grouping happens:
+
+```text
+one drawn 80 x 20 rectangle with "2 OFF" -> 2 x 80 x 20
+two separate 80 x 20 rectangles with no note -> 2 x 80 x 20
+```
+
+Both cases produce the same final quantity.
 
 ## PDF Fallback Path
 
-PDF is harder because it is a drawing output, not the original CAD data.
+PDF is harder because it is an output format, not the original CAD file.
 
-## Step 1: The Browser Renders The PDF
+Some CAD PDFs contain no selectable text. Dimension numbers may be drawn as vector outlines, so normal text extraction does not work.
 
-PDF drawings are hard for AI to read directly. So the browser turns each PDF page into an image.
+For PDF fallback, the app uses three layers.
 
-That image is what you see as a thumbnail.
+## PDF Step 1: Render Page Images
 
-The app also makes a higher-resolution hidden image for analysis, because small dimension numbers need more detail.
+The browser turns each PDF page into an image.
 
-Main file:
+That image is used for:
+
+- thumbnail preview,
+- OpenAI vision analysis.
+
+Main browser file:
 
 ```text
 public/app.js
 ```
 
-## Step 2: OpenAI Reads The Image
+## PDF Step 2: OpenAI Reads The Image
 
-The backend sends the page image to OpenAI vision.
+The backend sends the rendered page image to OpenAI vision.
 
-The AI is told:
+The prompt tells the model to:
 
-- Read dimensions outside rectangles.
-- Ignore text inside rectangles.
-- Ignore engraving specs like `5 mm`.
-- Ignore finish specs like `W-B`.
-- Return JSON, not a paragraph.
+- read dimension numbers outside rectangles,
+- ignore label text inside rectangles,
+- ignore engraving specs such as `5` or `10`,
+- ignore finish notes such as `W-B` and `BLACK`,
+- return structured JSON.
 
-Main file:
+Main backend file:
 
 ```text
 server.js
 ```
 
-## Step 3: The App Normalises The Answer
+## PDF Step 3: Geometry Correction
 
-The app always stores:
+Many CAD PDFs still contain vector rectangle paths.
 
-```text
-larger number  = Width X
-smaller number = Height Y
-```
-
-So `15 x 250` becomes `250 x 15`.
-
-It also combines duplicates. Two `80 x 20` labels become:
-
-```text
-2    80    20
-```
-
-## Step 4: A Special Audit Checks Thin Labels
-
-Thin labels are easy to misread because they may only show one small dimension, like `15`.
-
-The app asks a second AI pass to check these cases more carefully.
-
-This catches many mistakes, but AI can still be biased by nearby text.
-
-## Step 5: CAD Geometry Checks The Rectangles
-
-This is the strongest correction layer.
-
-CAD PDFs often contain the actual rectangle lines as vector paths. RELinvoicer reads those rectangle paths and checks their proportions.
+The backend reads those paths and compares actual rectangle proportions against the AI result.
 
 Example:
 
@@ -110,43 +110,55 @@ Example:
 250 / 15 = 16.67
 ```
 
-If the rectangle in the PDF has almost the same long-side-to-short-side proportion, the app knows that `250 x 15` is a better match than `200 x 15`.
+If the PDF contains a rectangle with the same long-side-to-short-side proportion, the app can correct a likely AI mistake such as `200 x 15` to `250 x 15`.
 
-The app also checks page scale so it does not confuse shapes with the same ratio, such as:
+## Normalising Results
 
-```text
-80 / 20  = 4
-120 / 30 = 4
-```
-
-Same ratio, different size. Page scale helps choose the right one.
-
-## Why Geometry Matters
-
-AI may look at nearby annotation text and pick the wrong number.
-
-Geometry asks a simpler question:
+Before showing the final table, the app normalises every label:
 
 ```text
-What shape is the rectangle?
+larger number  = Width X
+smaller number = Height Y
 ```
 
-For switchboard label drawings, the rectangle shape is usually the best clue.
+Then it groups matching sizes.
+
+So these all become the same row:
+
+```text
+250 x 15
+15 x 250
+Width 250, Height 15
+Height 15, Width 250
+```
 
 ## Data Flow
+
+DXF:
+
+```text
+DXF upload
+  -> backend reads CAD entities
+  -> backend finds label rectangles
+  -> backend applies quantity notes
+  -> browser shows final table and remarks
+```
+
+PDF:
 
 ```text
 PDF upload
   -> browser renders page images
-  -> backend sends image to OpenAI
+  -> backend sends images to OpenAI
   -> backend extracts CAD rectangles from PDF vectors
-  -> backend compares AI dimensions with rectangle geometry
+  -> backend corrects likely AI mistakes
   -> browser shows final table and remarks
 ```
 
 ## What The App Does Not Do Yet
 
 - It does not store projects or history.
-- It does not edit PDFs.
-- It does not guarantee perfect results on scanned or low-quality drawings.
+- It does not edit CAD files.
+- It does not read every possible DXF drawing style.
+- It does not guarantee perfect PDF results on scanned or low-quality drawings.
 - It does not replace human checking for production-critical labels.
