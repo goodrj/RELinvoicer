@@ -19,12 +19,12 @@
 
       <section class="workspace">
         <aside class="pages-panel">
-          <label class="drop-zone" id="dropZone">
-            <input id="pdfInput" type="file" accept="application/pdf" hidden />
+          <div class="drop-zone" id="dropZone" role="button" tabindex="0">
             <span class="drop-icon">PDF</span>
             <strong>Drop drawing PDF here</strong>
             <small>or click to choose a file</small>
-          </label>
+          </div>
+          <input id="pdfInput" type="file" accept="application/pdf" hidden />
 
           <div class="file-meta" id="fileMeta">No PDF loaded</div>
           <div class="page-actions">

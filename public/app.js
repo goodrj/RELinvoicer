@@ -416,6 +416,12 @@ function exportExcel() {
 }
 
 dropZone.addEventListener('click', () => pdfInput.click());
+dropZone.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    pdfInput.click();
+  }
+});
 dropZone.addEventListener('dragover', (event) => {
   event.preventDefault();
   dropZone.classList.add('dragging');
