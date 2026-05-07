@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(node server.js)",
+      "Bash(curl -s http://localhost:3000/)",
+      "Bash(curl -s http://localhost:3001/)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(curl -s -X POST http://localhost:3001/api/analyze -H \"Content-Type: application/json\" -d \"{\\\\\"pageImage\\\\\":\\\\\"dGVzdA==\\\\\",\\\\\"pageIndex\\\\\":0}\")",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
