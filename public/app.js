@@ -13,6 +13,9 @@ const reviewPanel = document.getElementById('reviewPanel');
 const reviewContent = document.getElementById('reviewContent');
 const remarksPanel = document.getElementById('remarksPanel');
 const remarksList = document.getElementById('remarksList');
+const analysisProgress = document.getElementById('analysisProgress');
+const analysisStatus = document.getElementById('analysisStatus');
+const analysisTimer = document.getElementById('analysisTimer');
 const serverStatus = document.getElementById('serverStatus');
 
 let pdfjsLib;
@@ -21,6 +24,8 @@ let loadedPdfDataBase64 = '';
 let pages = [];
 let activeResults = new Map();
 let priorResults = new Map();
+let analysisStartedAt = 0;
+let analysisTimerId = 0;
 
 async function initPdfJs() {
   pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');
@@ -52,6 +57,41 @@ function setBusy(pageNumber, busy, text) {
 
 function formatNumber(value) {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function updateAnalysisTimer() {
+  if (!analysisStartedAt) return;
+  analysisTimer.textContent = formatDuration(Date.now() - analysisStartedAt);
+}
+
+function beginAnalysis(message) {
+  analysisStartedAt = Date.now();
+  analysisProgress.hidden = false;
+  analysisProgress.classList.add('running');
+  analysisStatus.textContent = message;
+  analysisTimer.textContent = '00:00';
+  clearInterval(analysisTimerId);
+  analysisTimerId = setInterval(updateAnalysisTimer, 1000);
+}
+
+function updateAnalysisStatus(message) {
+  analysisStatus.textContent = message;
+  updateAnalysisTimer();
+}
+
+function finishAnalysis(message) {
+  updateAnalysisTimer();
+  clearInterval(analysisTimerId);
+  analysisTimerId = 0;
+  analysisProgress.classList.remove('running');
+  analysisStatus.textContent = `${message} in ${analysisTimer.textContent}`;
 }
 
 function resultSignature(result) {
@@ -215,6 +255,10 @@ async function analysePage(page) {
   const previous = activeResults.get(page.pageNumber);
   if (previous) priorResults.set(page.pageNumber, previous);
 
+  const standaloneRun = !analysisTimerId;
+  if (standaloneRun) beginAnalysis(`Analysis ongoing - page ${page.pageNumber}`);
+  else updateAnalysisStatus(`Analysis ongoing - page ${page.pageNumber}`);
+
   setBusy(page.pageNumber, true, 'Analysing');
   try {
     const response = await fetch('/api/analyse-page', {
@@ -232,8 +276,9 @@ async function analysePage(page) {
 
     activeResults.set(page.pageNumber, data);
     const changed = previous && resultSignature(previous) !== resultSignature(data);
-    setBusy(page.pageNumber, false, changed ? 'Different result' : `Done - ${Math.round((data.confidence || 0) * 100)}%`);
-    setPageStatus(page.pageNumber, changed ? 'Different result' : `Done - ${Math.round((data.confidence || 0) * 100)}%`, changed);
+    const pageDuration = formatDuration(Date.now() - analysisStartedAt);
+    setBusy(page.pageNumber, false, changed ? 'Different result' : `Done - ${Math.round((data.confidence || 0) * 100)}% - ${pageDuration}`);
+    setPageStatus(page.pageNumber, changed ? 'Different result' : `Done - ${Math.round((data.confidence || 0) * 100)}% - ${pageDuration}`, changed);
   } catch (error) {
     setBusy(page.pageNumber, false, 'Failed');
     setPageStatus(page.pageNumber, error.message, true);
@@ -241,14 +286,20 @@ async function analysePage(page) {
 
   renderResults();
   renderReview();
+  if (standaloneRun) finishAnalysis(`Page ${page.pageNumber} analysis finished`);
 }
 
 async function analyseAll() {
+  beginAnalysis(`Analysis ongoing - 0 of ${pages.length} pages complete`);
   analyseAllBtn.disabled = true;
-  for (const page of pages) {
+  for (let index = 0; index < pages.length; index += 1) {
+    updateAnalysisStatus(`Analysis ongoing - page ${index + 1} of ${pages.length}`);
+    const page = pages[index];
     await analysePage(page);
+    updateAnalysisStatus(`Analysis ongoing - ${index + 1} of ${pages.length} pages complete`);
   }
   analyseAllBtn.disabled = pages.length === 0;
+  finishAnalysis(`Analysis finished for ${pages.length} page${pages.length === 1 ? '' : 's'}`);
 }
 
 // Each page is rendered twice: a small canvas for the visible thumbnail and a
@@ -264,6 +315,10 @@ async function renderPdf(file) {
   activeResults.clear();
   priorResults.clear();
   thumbList.innerHTML = '';
+  analysisProgress.hidden = true;
+  clearInterval(analysisTimerId);
+  analysisTimerId = 0;
+  analysisStartedAt = 0;
 
   for (let index = 1; index <= pdf.numPages; index += 1) {
     const page = await pdf.getPage(index);

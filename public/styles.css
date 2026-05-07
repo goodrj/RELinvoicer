@@ -16,6 +16,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -254,6 +258,39 @@ h3 {
 .toolbar {
   justify-content: flex-start;
   margin: 18px 0 12px;
+}
+
+.analysis-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid #b8c7d9;
+  border-radius: 8px;
+  background: #f4f8fc;
+}
+
+.analysis-progress.running {
+  border-color: rgba(23, 107, 93, 0.45);
+  background: #eef8f4;
+}
+
+.analysis-time {
+  display: grid;
+  gap: 2px;
+  min-width: 112px;
+  text-align: right;
+}
+
+.analysis-time span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.analysis-time strong {
+  font-size: 22px;
 }
 
 .table-wrap {

@@ -23,8 +23,9 @@ If the app says the API key is missing, open `.env` and add your OpenAI API key.
 1. Drop the PDF onto the upload box.
 2. Wait for the page thumbnails to appear.
 3. Click `Analyse`.
-4. Read the result table.
-5. Check the remarks if they appear.
+4. Watch the analysis status. It will say analysis is ongoing and show elapsed time.
+5. Read the result table.
+6. Check the remarks if they appear.
 
 ## Understand The Result
 
@@ -53,6 +54,17 @@ Geometry correction used CAD rectangle proportions as the authority.
 ```
 
 That means the app checked the actual rectangle shape in the PDF and used that to fix or confirm the result.
+
+## Understand The Timer
+
+While the app is analysing, the status box shows:
+
+```text
+Analysis ongoing
+Elapsed time 00:12
+```
+
+When the analysis finishes, it keeps the final time on screen so you can see how long the run took.
 
 ## Export Results
 

@@ -55,9 +55,10 @@ On Windows, you can also run:
 1. Drag a PDF onto the page, or click the upload box.
 2. Check the page thumbnails.
 3. Click `Analyse`.
-4. Review the table of unique sizes.
-5. Check any analysis remarks.
-6. Copy the TSV results or export Excel.
+4. Watch the live status and elapsed timer.
+5. Review the table of unique sizes.
+6. Check any analysis remarks.
+7. Copy the TSV results or export Excel.
 
 If a page looks wrong, click `Re-analyse` on that page.
 
