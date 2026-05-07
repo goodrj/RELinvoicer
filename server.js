@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 3192);
 const MILLIMETRES_INSUNITS = '4';
+const DXF_QUANTITY_PATTERN = /(?:\bquantity\s*:\s*(\d+)\s*(?:only|off(?:\s+each)?)?\b|\bqty\s*:?\s*(\d+)\b|\b(\d+)\s*off(?:\s+each)?\b|\b(\d+)\s*only\b|\b(\d+)\s*required\b)/i;
 
 app.use(express.json({ limit: '35mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -215,8 +216,101 @@ function dxfDimensionMatches(value, dimensionValues) {
   return dimensionValues.some((dimension) => Math.abs(dimension - value) <= 0.5);
 }
 
+function cleanDxfText(value) {
+  return String(value || '')
+    .replace(/\\P/g, ' ')
+    .replace(/\{\\f[^;]*;/g, '')
+    .replace(/[{}]/g, '')
+    .replace(/\\[A-Za-z0-9.;|+-]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractDxfQuantityTexts(entities) {
+  const quantityTexts = [];
+
+  for (const entity of entities) {
+    if (entity.type !== 'TEXT' && entity.type !== 'MTEXT') continue;
+
+    const text = cleanDxfText(dxfValues(entity, '1').join(' '));
+    const match = DXF_QUANTITY_PATTERN.exec(text);
+    const x = dxfNumbers(entity, '10')[0];
+    const y = dxfNumbers(entity, '20')[0];
+    if (!match || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+    const quantity = match.slice(1).find(Boolean);
+    quantityTexts.push({
+      quantity: Number(quantity),
+      text,
+      x,
+      y
+    });
+  }
+
+  return quantityTexts;
+}
+
+function rectangleTextRelation(rectangle, text) {
+  const centerX = (rectangle.x1 + rectangle.x2) / 2;
+  const centerY = (rectangle.y1 + rectangle.y2) / 2;
+  const inside = text.x >= rectangle.x1 && text.x <= rectangle.x2 && text.y >= rectangle.y1 && text.y <= rectangle.y2;
+  const gapX = Math.max(rectangle.x1 - text.x, 0, text.x - rectangle.x2);
+  const gapY = Math.max(rectangle.y1 - text.y, 0, text.y - rectangle.y2);
+  const dx = text.x - centerX;
+  const dy = text.y - centerY;
+
+  let position = 'nearby';
+  if (inside) position = 'inside';
+  else if (text.x > rectangle.x2) position = 'right';
+  else if (text.x < rectangle.x1) position = 'left';
+  else if (text.y > rectangle.y2) position = 'above';
+  else if (text.y < rectangle.y1) position = 'below';
+
+  return {
+    position,
+    dx,
+    dy,
+    gap: Math.hypot(gapX, gapY)
+  };
+}
+
+function quantityForDxfRectangle(rectangle, quantityTexts) {
+  const candidates = [];
+
+  for (const text of quantityTexts) {
+    const relation = rectangleTextRelation(rectangle, text);
+    const inSearchBand = text.x >= rectangle.x1 - 180
+      && text.x <= rectangle.x2 + 180
+      && text.y >= rectangle.y1 - 120
+      && text.y <= rectangle.y2 + 120;
+    if (!inSearchBand) continue;
+
+    const preferredPosition = relation.position === 'right' || relation.position === 'inside';
+    const score = relation.gap
+      + Math.abs(relation.dy) * 0.2
+      + (preferredPosition ? 0 : 35);
+
+    candidates.push({ text, relation, score });
+  }
+
+  if (!candidates.length) {
+    return {
+      quantity: 1,
+      evidence: 'No nearby quantity text found; defaulted to 1.'
+    };
+  }
+
+  candidates.sort((left, right) => left.score - right.score);
+  const best = candidates[0];
+  return {
+    quantity: Math.max(1, Number(best.text.quantity || 1)),
+    evidence: `Quantity read from nearby text "${best.text.text}" (${best.relation.position}).`
+  };
+}
+
 function extractDxfRectangles(entities, dimensionValues) {
   const rectangles = [];
+  const quantityTexts = extractDxfQuantityTexts(entities);
 
   for (const entity of entities) {
     if (entity.type !== 'LWPOLYLINE') continue;
@@ -240,13 +334,20 @@ function extractDxfRectangles(entities, dimensionValues) {
 
     if (!hasLabelSize || !hasDimensionMatch || isTinyAuxiliaryShape) continue;
 
+    const quantity = quantityForDxfRectangle({
+      x1: Math.min(...xs),
+      x2: Math.max(...xs),
+      y1: Math.min(...ys),
+      y2: Math.max(...ys)
+    }, quantityTexts);
+
     rectangles.push({
-      quantity: 1,
+      quantity: quantity.quantity,
       widthMm: longSide,
       heightMm: shortSide,
       sharedDimension: false,
       inferredDimension: 'none',
-      evidence: `Read from DXF closed LWPOLYLINE on layer ${layer}.`
+      evidence: `Read from DXF closed LWPOLYLINE on layer ${layer}. ${quantity.evidence}`
     });
   }
 
@@ -259,7 +360,8 @@ function analyseDxf(dxfText) {
   const entities = parseDxfEntities(pairs);
   const units = header.$INSUNITS?.find(([code]) => code === '70')?.[1] || '';
   const dimensionValues = extractDxfDimensions(entities);
-  const labels = normaliseLabels(extractDxfRectangles(entities, dimensionValues));
+  const dxfRectangles = extractDxfRectangles(entities, dimensionValues);
+  const labels = normaliseLabels(dxfRectangles);
   const remarks = [
     {
       level: units === MILLIMETRES_INSUNITS ? 'info' : 'warning',
@@ -269,7 +371,7 @@ function analyseDxf(dxfText) {
     },
     {
       level: 'info',
-      message: `DXF analysis used ${labels.reduce((sum, item) => sum + item.quantity, 0)} closed label rectangle${labels.length === 1 ? '' : 's'} and ${dimensionValues.length} dimension value${dimensionValues.length === 1 ? '' : 's'}.`
+      message: `DXF analysis used ${dxfRectangles.length} closed label rectangle${dxfRectangles.length === 1 ? '' : 's'} and ${dimensionValues.length} dimension value${dimensionValues.length === 1 ? '' : 's'}.`
     }
   ];
 

@@ -33,6 +33,8 @@ DXF files are structured CAD files. They can contain real entities such as:
 
 RELinvoicer reads closed 4-point `LWPOLYLINE` shapes, checks them against `DIMENSION` values, and converts them into label sizes.
 
+It also looks for nearby quantity text, such as `2 OFF` or `QUANTITY: 4 ONLY`, and applies that quantity to the matching rectangle before grouping the final table.
+
 For DXF, no AI vision is needed.
 
 ## PDF Fallback Path

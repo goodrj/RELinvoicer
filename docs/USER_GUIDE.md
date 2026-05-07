@@ -76,6 +76,8 @@ Use `Export Excel` when you want an `.xlsx` file with a totals row.
 
 Use DXF whenever you have it. DXF reads the CAD rectangles directly and is more accurate.
 
+DXF also reads nearby quantity notes such as `2 OFF` or `QUANTITY: 4 ONLY`.
+
 Use PDF only when DXF is not available.
 
 ## Re-Analyse One Page
