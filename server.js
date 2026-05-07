@@ -13,36 +13,34 @@ if (!process.env.OPENAI_API_KEY) {
 
 const openai = new OpenAI();
 
-const EXTRACT_PROMPT = `You are analyzing an engineering drawing of switchboard labels used in electrical switchboard manufacturing.
+const EXTRACT_PROMPT = `You are reading an engineering drawing of switchboard labels. Extract every label's dimensions by following these four steps in order.
 
-The page shows rectangular label outlines arranged on the page. Each rectangle is a label to be manufactured.
+━━━ STEP 1 — LIST EVERY DIMENSION LINE ━━━
+Scan the whole page and find every dimension annotation. A dimension annotation is a line with arrows or tick marks at both ends, with a number in the middle. For each one you find, note:
+  • The number value
+  • Direction: horizontal arrow (↔) = this is a WIDTH measurement, vertical arrow (↕) = this is a HEIGHT measurement
+  • Which rectangle(s) the arrows point to at both ends
 
-═══ HOW DIMENSIONS ARE ANNOTATED ═══
-Dimension lines in these drawings follow standard engineering drafting convention:
-- A dimension line runs PARALLEL to the edge it is measuring, positioned OUTSIDE the box
-- It has arrows or tick marks at BOTH ends pointing to the edges being measured
-- The measurement number sits in the MIDDLE of that line
-- A horizontal dimension line (above or below the box) = WIDTH of that box in mm
-- A vertical dimension line (left or right of the box) = HEIGHT of that box in mm
-- Two labels that share the same dimension line have the same measurement for that dimension
+━━━ STEP 2 — HANDLE SHARED DIMENSION LINES ━━━
+This is critical: a single dimension line can span across two or more adjacent boxes simultaneously. This is called common dimensioning and is standard CAD practice. When one dimension line's arrows span the edges of multiple boxes, EVERY one of those boxes shares that measurement — even if those individual boxes have no separate dimension line of their own for that direction. Do not skip a box just because it lacks its own dedicated dimension line.
 
-═══ WHAT TO COMPLETELY IGNORE ═══
-These appear on every drawing and must NOT be read as dimensions:
-- Text INSIDE the box (label content, warning text, circuit descriptions)
-- Small numbers BELOW the box such as "5mm", "6mm", "10mm" — these are the engraving/text height specs
-- Words below the box such as "1 OFF", "2 OFF", "W-B", "R-W", "BLACK", "WHITE" — these are finish/quantity specs for the engraver
-- Any number that does not have a dimension line with arrows attached to it
+━━━ STEP 3 — ASSIGN DIMENSIONS TO EACH BOX ━━━
+For every rectangle that has at least one dimension annotation (directly or via a shared line):
+  • Width X (mm)  = the horizontal dimension line that covers this box
+  • Height Y (mm) = the vertical dimension line that covers this box
+  • Count how many identical W×H boxes appear on the page
 
-═══ HOW TO COUNT ═══
-- Each distinct rectangle on the page is one label
-- If two or more rectangles have the same Width × Height, count them as one entry with combined quantity
-- A shared dimension line means both labels share that measurement
+━━━ WHAT TO IGNORE ━━━
+  • All text inside boxes (warning messages, circuit labels, manufacturer data)
+  • Small numbers below boxes like "5mm", "6mm", "10mm" — these are engraving text-height specs, NOT label dimensions
+  • Words below boxes like "1 OFF", "2 OFF", "W-B", "R-W", "BLACK" — these are finish/quantity specs for the engraver, NOT dimensions
+  • Any number without a dimension line and arrows attached
 
-═══ OUTPUT FORMAT ═══
-Return ONLY this JSON with no markdown, no explanation, nothing else:
+━━━ STEP 4 — OUTPUT ━━━
+Return ONLY this JSON. No markdown fences. No explanation. Nothing else.
 {"entries":[{"width":<number>,"height":<number>,"qty":<number>}]}
 
-If no annotated boxes are found: {"entries":[]}`;
+If no annotated boxes exist: {"entries":[]}`;
 
 async function analyzeImage(base64Image) {
   const response = await openai.chat.completions.create({
