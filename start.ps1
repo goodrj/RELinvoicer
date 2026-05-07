@@ -1,12 +1,12 @@
 # Relec Invoicer — start script
-# Set your Anthropic API key here or in your environment
-# $env:ANTHROPIC_API_KEY = "sk-ant-..."
+# Set your Gemini API key here or in your environment
+# $env:GEMINI_API_KEY = "AIza..."
 
-if (-not $env:ANTHROPIC_API_KEY) {
+if (-not $env:GEMINI_API_KEY) {
     Write-Host ""
-    Write-Host "  ERROR: ANTHROPIC_API_KEY is not set." -ForegroundColor Red
+    Write-Host "  ERROR: GEMINI_API_KEY is not set." -ForegroundColor Red
     Write-Host "  Set it first:" -ForegroundColor Yellow
-    Write-Host '  $env:ANTHROPIC_API_KEY = "sk-ant-..."' -ForegroundColor Cyan
+    Write-Host '  $env:GEMINI_API_KEY = "AIza..."' -ForegroundColor Cyan
     Write-Host ""
     exit 1
 }

@@ -1,12 +1,18 @@
 const express = require('express');
-const Anthropic = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const path = require('path');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const anthropic = new Anthropic();
+if (!process.env.GEMINI_API_KEY) {
+  console.error('ERROR: GEMINI_API_KEY environment variable is not set.');
+  process.exit(1);
+}
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
 const EXTRACT_PROMPT = `You are analyzing a page from an engineering drawing of switchboard label layouts.
 
@@ -36,23 +42,12 @@ If no dimension annotations are found anywhere on the page, return:
 {"entries":[]}`;
 
 async function analyzeImage(base64Image) {
-  const response = await anthropic.messages.create({
-    model: 'claude-opus-4-7',
-    max_tokens: 2048,
-    messages: [{
-      role: 'user',
-      content: [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: 'image/png', data: base64Image }
-        },
-        { type: 'text', text: EXTRACT_PROMPT }
-      ]
-    }]
-  });
+  const result = await model.generateContent([
+    { inlineData: { data: base64Image, mimeType: 'image/png' } },
+    EXTRACT_PROMPT
+  ]);
 
-  const raw = response.content[0].text.trim();
-  // Strip any accidental markdown code fences
+  const raw = result.response.text().trim();
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   const parsed = JSON.parse(cleaned);
   if (!Array.isArray(parsed.entries)) throw new Error('Unexpected response shape');
