@@ -7,11 +7,10 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 if (!process.env.OPENAI_API_KEY) {
-  console.error('ERROR: OPENAI_API_KEY environment variable is not set.');
-  process.exit(1);
+  console.warn('WARNING: OPENAI_API_KEY not set — AI fallback disabled. Fine for CAD vector PDFs.');
 }
 
-const openai = new OpenAI();
+const openai = process.env.OPENAI_API_KEY ? new OpenAI() : null;
 
 const EXTRACT_PROMPT_BASE = `You are reading an engineering drawing of switchboard labels.
 
@@ -59,6 +58,7 @@ function buildPrompt(textItems) {
 }
 
 async function analyzeImage(base64Image, textItems) {
+  if (!openai) throw new Error('AI fallback unavailable — set OPENAI_API_KEY to enable it.');
   const prompt = buildPrompt(textItems);
 
   const response = await openai.chat.completions.create({
