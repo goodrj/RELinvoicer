@@ -7,7 +7,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const state = {
-  pages: [],      // { index, thumbnail, base64, status, entries, run1, run2, error }
+  pages: [],
   analysing: false,
 };
 
@@ -39,9 +39,7 @@ uploadZone.addEventListener('dragover', e => {
   e.preventDefault();
   uploadZone.classList.add('drag-over');
 });
-
 uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
-
 uploadZone.addEventListener('drop', e => {
   e.preventDefault();
   uploadZone.classList.remove('drag-over');
@@ -49,18 +47,15 @@ uploadZone.addEventListener('drop', e => {
   if (file?.type === 'application/pdf') loadPDF(file);
   else showToast('Please drop a PDF file');
 });
-
 fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) loadPDF(fileInput.files[0]);
 });
-
 clearBtn.addEventListener('click', resetAll);
 
 // ─── Load PDF ─────────────────────────────────────────────────────────────────
 
 async function loadPDF(file) {
   resetAll();
-
   fileName.textContent = file.name;
   fileMeta.textContent = formatBytes(file.size);
   fileBar.style.display = 'flex';
@@ -73,7 +68,6 @@ async function loadPDF(file) {
   thumbnailsSect.style.display = 'block';
   controlsEl.style.display = 'flex';
 
-  // Render all pages concurrently (thumbnails + extract base64)
   const renderPromises = [];
   for (let i = 1; i <= numPages; i++) {
     const idx = i - 1;
@@ -87,49 +81,203 @@ async function loadPDF(file) {
 
 async function renderPage(pdf, pageNum, idx) {
   const page = await pdf.getPage(pageNum);
-  const viewport = page.getViewport({ scale: 3.0 });
 
-  // High-res canvas for API (PNG)
+  // Hi-res canvas for AI fallback
+  const hiViewport = page.getViewport({ scale: 3.0 });
   const hiCanvas = document.createElement('canvas');
-  hiCanvas.width = viewport.width;
-  hiCanvas.height = viewport.height;
-  await page.render({ canvasContext: hiCanvas.getContext('2d'), viewport }).promise;
-  const base64 = hiCanvas.toDataURL('image/png').split(',')[1];
+  hiCanvas.width  = hiViewport.width;
+  hiCanvas.height = hiViewport.height;
+  await page.render({ canvasContext: hiCanvas.getContext('2d'), viewport: hiViewport }).promise;
+  state.pages[idx].base64 = hiCanvas.toDataURL('image/png').split(',')[1];
 
-  // Thumbnail canvas
-  const thumbViewport = page.getViewport({ scale: 0.4 });
+  // Thumbnail
+  const thumbVP = page.getViewport({ scale: 0.4 });
   const thumbCanvas = document.createElement('canvas');
-  thumbCanvas.width = thumbViewport.width;
-  thumbCanvas.height = thumbViewport.height;
+  thumbCanvas.width  = thumbVP.width;
+  thumbCanvas.height = thumbVP.height;
   thumbCanvas.className = 'thumb-canvas';
-  await page.render({ canvasContext: thumbCanvas.getContext('2d'), viewport: thumbViewport }).promise;
+  await page.render({ canvasContext: thumbCanvas.getContext('2d'), viewport: thumbVP }).promise;
 
-  state.pages[idx].base64 = base64;
-
-  // Extract text items directly from PDF (exact numbers, no vision guessing)
-  const textContent = await page.getTextContent();
-  const pageViewport = page.getViewport({ scale: 1.0 });
-  state.pages[idx].textItems = textContent.items
-    .filter(item => item.str.trim().length > 0)
-    .map(item => ({
-      text: item.str.trim(),
-      // Normalise to top-left origin so coordinates make intuitive sense
-      x: Math.round(item.transform[4]),
-      y: Math.round(pageViewport.height - item.transform[5])
-    }));
+  // Extract full geometry for algorithmic extraction
+  state.pages[idx].geometry = await extractPageGeometry(page);
 
   // Build thumb card
   const card = document.createElement('div');
   card.className = 'thumb-card';
   card.id = `thumb-${idx}`;
-
-  const label = document.createElement('div');
-  label.className = 'thumb-label';
-  label.innerHTML = `<span>p.${idx + 1}</span><span class="thumb-badge pending" id="badge-${idx}"></span>`;
-
+  const lbl = document.createElement('div');
+  lbl.className = 'thumb-label';
+  lbl.innerHTML = `<span>p.${idx + 1}</span><span class="thumb-badge pending" id="badge-${idx}"></span>`;
   card.appendChild(thumbCanvas);
-  card.appendChild(label);
+  card.appendChild(lbl);
   thumbnailsGrid.appendChild(card);
+}
+
+// ─── PDF Geometry Extraction ──────────────────────────────────────────────────
+
+async function extractPageGeometry(page) {
+  const vp  = page.getViewport({ scale: 1.0 });
+  const H   = vp.height;
+  const flipY = y => H - y;   // PDF origin is bottom-left; flip to top-left
+
+  // ── Rectangles from operator list ──────────────────────────────────────────
+  const ops  = await page.getOperatorList();
+  const OPS  = pdfjsLib.OPS;
+  const rects = [];
+
+  let pathPts  = [];   // accumulated points of current open path
+  let curX = 0, curY = 0;
+
+  const tryAddPathRect = () => {
+    // A rectangle drawn as 4 lineto segments (moveto + 3 or 4 lineto)
+    const pts = pathPts.slice(0, 4);
+    if (pts.length < 3) return;
+    const isAxisAligned = pts.every((p, i) => {
+      const q = pts[(i + 1) % pts.length];
+      return Math.abs(p.x - q.x) < 1 || Math.abs(p.y - q.y) < 1;
+    });
+    if (!isAxisAligned) return;
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const w  = x1 - x0, h = y1 - y0;
+    if (w > 5 && h > 5) rects.push({ x: x0, y: y0, w, h }); // already in screen coords
+  };
+
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const fn   = ops.fnArray[i];
+    const args = ops.argsArray[i];
+
+    if (fn === OPS.rectangle) {
+      // `re` operator: args = [x, y, w, h] in PDF coords (y = bottom edge)
+      let [x, y, w, h] = args;
+      if (w < 0) { x += w; w = -w; }
+      if (h < 0) { y += h; h = -h; }
+      if (w > 5 && h > 5) {
+        rects.push({ x, y: flipY(y + h), w, h });
+      }
+    } else if (fn === OPS.moveTo) {
+      pathPts = [{ x: args[0], y: flipY(args[1]) }];
+      curX = args[0]; curY = args[1];
+    } else if (fn === OPS.lineTo) {
+      pathPts.push({ x: args[0], y: flipY(args[1]) });
+      curX = args[0]; curY = args[1];
+    } else if (
+      fn === OPS.stroke      || fn === OPS.fill         ||
+      fn === OPS.fillStroke  || fn === OPS.eoFill       ||
+      fn === OPS.eoFillStroke || fn === OPS.closePath
+    ) {
+      tryAddPathRect();
+      pathPts = [];
+    }
+  }
+
+  // De-duplicate rectangles (same coords within 2pt tolerance)
+  const uniqueRects = [];
+  for (const r of rects) {
+    const dup = uniqueRects.some(u =>
+      Math.abs(u.x - r.x) < 2 && Math.abs(u.y - r.y) < 2 &&
+      Math.abs(u.w - r.w) < 2 && Math.abs(u.h - r.h) < 2
+    );
+    if (!dup) uniqueRects.push(r);
+  }
+
+  // ── Text items ─────────────────────────────────────────────────────────────
+  const tc = await page.getTextContent();
+  const textItems = tc.items
+    .filter(item => item.str.trim().length > 0)
+    .map(item => ({
+      text: item.str.trim(),
+      x:    item.transform[4],
+      y:    flipY(item.transform[5]),
+    }));
+
+  return { rects: uniqueRects, textItems, pageW: vp.width, pageH: H };
+}
+
+// ─── Algorithmic dimension matching ──────────────────────────────────────────
+
+function matchDimensions(geometry) {
+  if (!geometry) return [];
+  const { rects, textItems, pageW, pageH } = geometry;
+
+  // Only pure integers in a sensible label-dimension range (10–2000 mm)
+  const nums = textItems
+    .filter(t => /^\d+$/.test(t.text))
+    .map(t => ({ v: parseInt(t.text, 10), x: t.x, y: t.y }))
+    .filter(n => n.v >= 10 && n.v <= 2000);
+
+  // Keep rectangles of plausible label size; reject page borders and hairlines
+  const MIN_DIM = 15;   // PDF points (~5 mm)
+  const labelRects = rects.filter(r =>
+    r.w >= MIN_DIM && r.h >= MIN_DIM &&
+    r.w < pageW * 0.97 && r.h < pageH * 0.97
+  );
+
+  // How far (in PDF points) outside a rect edge a dimension number may sit.
+  // 72 pt = 1 inch ≈ 25.4 mm  →  50 pt ≈ 17.6 mm — generous enough for most CAD drawings.
+  const PROX = 50;
+
+  const entries = [];
+
+  for (const rect of labelRects) {
+    const { x: rx, y: ry, w: rw, h: rh } = rect;
+
+    // A number is a candidate for a given edge if:
+    //   • its coordinate perpendicular to that edge is OUTSIDE the rect (but within PROX)
+    //   • its coordinate parallel to that edge overlaps with the rect (± PROX)
+    const isInsideRect = n =>
+      n.x > rx && n.x < rx + rw && n.y > ry && n.y < ry + rh;
+
+    // Width candidates: numbers above or below (y outside), x overlaps rect
+    const wCands = nums.filter(n => {
+      if (isInsideRect(n)) return false;
+      const xOk  = n.x > rx - PROX    && n.x < rx + rw + PROX;
+      const above = n.y >= ry - PROX   && n.y < ry;
+      const below = n.y > ry + rh      && n.y <= ry + rh + PROX;
+      return xOk && (above || below);
+    });
+
+    // Height candidates: numbers left or right (x outside), y overlaps rect
+    const hCands = nums.filter(n => {
+      if (isInsideRect(n)) return false;
+      const yOk  = n.y > ry - PROX    && n.y < ry + rh + PROX;
+      const left  = n.x >= rx - PROX  && n.x < rx;
+      const right = n.x > rx + rw     && n.x <= rx + rw + PROX;
+      return yOk && (left || right);
+    });
+
+    if (wCands.length === 0 && hCands.length === 0) continue;
+
+    // Pick the number closest to the rect edge for each direction
+    const closest = (cands, distFn) =>
+      cands.slice().sort((a, b) => distFn(a) - distFn(b))[0];
+
+    const wNum = closest(wCands, n =>
+      Math.min(Math.abs(n.y - ry), Math.abs(n.y - ry - rh)));
+    const hNum = closest(hCands, n =>
+      Math.min(Math.abs(n.x - rx), Math.abs(n.x - rx - rw)));
+
+    // Need both dimensions to produce an entry
+    if (!wNum || !hNum) continue;
+
+    // Convention: Width X = larger dimension, Height Y = smaller
+    const bigger  = Math.max(wNum.v, hNum.v);
+    const smaller = Math.min(wNum.v, hNum.v);
+    entries.push({ width: bigger, height: smaller, qty: 1 });
+  }
+
+  // Merge identical W×H pairs and sum quantities
+  const merged = new Map();
+  for (const e of entries) {
+    const key = `${e.width}x${e.height}`;
+    if (merged.has(key)) merged.get(key).qty++;
+    else merged.set(key, { ...e });
+  }
+
+  return [...merged.values()].sort(
+    (a, b) => b.qty - a.qty || (b.width * b.height) - (a.width * a.height)
+  );
 }
 
 // ─── Analyse ──────────────────────────────────────────────────────────────────
@@ -144,30 +292,43 @@ async function analyzeAll() {
   analyzeBtnText.textContent = 'Analysing…';
   resultsSect.style.display = 'block';
 
-  // Only analyse pages that are pending or errored
   const toAnalyse = state.pages.filter(p => p.status === 'pending' || p.status === 'error');
-
   let done = 0;
-  const updateProgress = () => {
-    done++;
-    progressText.textContent = `${done} / ${toAnalyse.length} pages`;
-  };
+  const tick = () => { done++; progressText.textContent = `${done} / ${toAnalyse.length} pages`; };
 
-  // Run all pages in parallel (server batches the two AI calls per page)
   await Promise.all(toAnalyse.map(async page => {
     setPageStatus(page.index, 'analyzing');
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageImage: page.base64, textItems: page.textItems, pageIndex: page.index })
+
+    const geoEntries = matchDimensions(page.geometry);
+
+    if (geoEntries.length > 0) {
+      // Geometry extraction succeeded — mark confirmed immediately, no API call
+      applyPageResult({
+        pageIndex: page.index,
+        status: 'confirmed',
+        entries: geoEntries,
+        run1: geoEntries,
+        run2: geoEntries,
       });
-      const data = await res.json();
-      applyPageResult(data);
-    } catch (err) {
-      applyPageResult({ pageIndex: page.index, status: 'error', error: err.message });
+    } else {
+      // Fallback: send to AI (for scanned PDFs or unusual drawings)
+      try {
+        const res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pageImage:  page.base64,
+            textItems:  page.geometry?.textItems,
+            pageIndex:  page.index,
+          }),
+        });
+        applyPageResult(await res.json());
+      } catch (err) {
+        applyPageResult({ pageIndex: page.index, status: 'error', error: err.message });
+      }
     }
-    updateProgress();
+
+    tick();
     renderTable();
   }));
 
@@ -185,16 +346,31 @@ async function analyseOnePage(idx) {
   setPageStatus(idx, 'analyzing');
   renderTable();
 
-  try {
-    const res = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pageImage: page.base64, textItems: page.textItems, pageIndex: idx })
+  const geoEntries = matchDimensions(page.geometry);
+
+  if (geoEntries.length > 0) {
+    applyPageResult({
+      pageIndex: idx,
+      status: 'confirmed',
+      entries: geoEntries,
+      run1: geoEntries,
+      run2: geoEntries,
     });
-    const data = await res.json();
-    applyPageResult(data);
-  } catch (err) {
-    applyPageResult({ pageIndex: idx, status: 'error', error: err.message });
+  } else {
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pageImage: page.base64,
+          textItems: page.geometry?.textItems,
+          pageIndex: idx,
+        }),
+      });
+      applyPageResult(await res.json());
+    } catch (err) {
+      applyPageResult({ pageIndex: idx, status: 'error', error: err.message });
+    }
   }
   renderTable();
 }
@@ -216,7 +392,7 @@ function setPageStatus(idx, status) {
   if (badge) badge.className = `thumb-badge ${status}`;
 }
 
-// ─── Resolve mismatch ────────────────────────────────────────────────────────
+// ─── Resolve mismatch ─────────────────────────────────────────────────────────
 
 function resolveMismatch(pageIdx, chosenEntries) {
   const page = state.pages[pageIdx];
@@ -227,14 +403,12 @@ function resolveMismatch(pageIdx, chosenEntries) {
   renderTable();
 }
 
-// ─── Table rendering ─────────────────────────────────────────────────────────
+// ─── Table rendering ──────────────────────────────────────────────────────────
 
 function renderTable() {
   resultsBody.innerHTML = '';
 
-  // Build merged confirmed map: key → { width, height, qty, pages }
-  const confirmed = new Map(); // 'WxH' → { width, height, qty, pages }
-
+  const confirmed = new Map();
   for (const page of state.pages) {
     if (page.status === 'confirmed' && page.entries) {
       for (const e of page.entries) {
@@ -249,12 +423,10 @@ function renderTable() {
     }
   }
 
-  // Sort confirmed rows: qty desc, area desc
   const confirmedRows = [...confirmed.values()].sort(
     (a, b) => b.qty !== a.qty ? b.qty - a.qty : (b.width * b.height) - (a.width * a.height)
   );
 
-  // Render confirmed rows
   for (const row of confirmedRows) {
     const multiPage = row.pages.length > 1;
     const tr = document.createElement('tr');
@@ -265,16 +437,13 @@ function renderTable() {
       <td class="num">${row.width}</td>
       <td class="num">${row.height}</td>
       <td style="font-size:11px;color:var(--text-muted)">${row.pages.map(i => `p.${i+1}`).join(', ')}</td>
-      <td>
-        ${multiPage
-          ? `<button class="btn-icon" disabled data-tooltip="Merged from multiple pages — re-check individual pages instead">↺</button>`
-          : `<button class="btn-icon" onclick="analyseOnePage(${row.pages[0]})" title="Re-check page ${row.pages[0]+1}">↺</button>`
-        }
-      </td>`;
+      <td>${multiPage
+        ? `<button class="btn-icon" disabled data-tooltip="Merged from multiple pages — re-check individual pages instead">↺</button>`
+        : `<button class="btn-icon" onclick="analyseOnePage(${row.pages[0]})" title="Re-check page ${row.pages[0]+1}">↺</button>`
+      }</td>`;
     resultsBody.appendChild(tr);
   }
 
-  // Render mismatch rows
   for (const page of state.pages) {
     if (page.status !== 'mismatch') continue;
     const tr = document.createElement('tr');
@@ -298,7 +467,6 @@ function renderTable() {
     resultsBody.appendChild(tr);
   }
 
-  // Render error rows
   for (const page of state.pages) {
     if (page.status !== 'error') continue;
     const tr = document.createElement('tr');
@@ -311,40 +479,32 @@ function renderTable() {
     resultsBody.appendChild(tr);
   }
 
-  // Analysing rows
   for (const page of state.pages) {
     if (page.status !== 'analyzing') continue;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><span class="badge badge-pending"><span class="spinner"></span> Analysing</span></td>
-      <td colspan="3" style="color:var(--text-muted)">Running two analyses…</td>
+      <td colspan="3" style="color:var(--text-muted)">Extracting dimensions…</td>
       <td style="font-size:11px;color:var(--text-muted)">p.${page.index+1}</td>
       <td></td>`;
     resultsBody.appendChild(tr);
   }
 
-  // Empty state
   if (resultsBody.children.length === 0) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td colspan="6"><div class="empty-state"><div class="empty-state-icon">📋</div>No results yet — click Analyse to start</div></td>`;
     resultsBody.appendChild(tr);
   }
 
-  // Totals row
   const totalQty = confirmedRows.reduce((s, r) => s + r.qty, 0);
   if (confirmedRows.length > 0) {
     const tr = document.createElement('tr');
     tr.className = 'totals-row';
-    tr.innerHTML = `
-      <td>Total</td>
-      <td class="num">${totalQty}</td>
-      <td colspan="4"></td>`;
+    tr.innerHTML = `<td>Total</td><td class="num">${totalQty}</td><td colspan="4"></td>`;
     resultsBody.appendChild(tr);
   }
 
   totalValue.textContent = confirmedRows.reduce((s, r) => s + r.qty, 0);
-
-  // Enable/disable export buttons
   const hasConfirmed = confirmedRows.length > 0;
   copyBtn.disabled   = !hasConfirmed;
   exportBtn.disabled = !hasConfirmed;
@@ -376,19 +536,14 @@ copyBtn.addEventListener('click', () => {
 exportBtn.addEventListener('click', () => {
   const rows = getConfirmedRows();
   const totalQty = rows.reduce((s, r) => s + r.qty, 0);
-
   const data = [
     ['Qty', 'Width X (mm)', 'Height Y (mm)'],
     ...rows.map(r => [r.qty, r.width, r.height]),
     ['TOTAL', totalQty, ''],
   ];
-
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(data);
-
-  // Column widths
   ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 14 }];
-
   XLSX.utils.book_append_sheet(wb, ws, 'Label Dimensions');
   XLSX.writeFile(wb, 'label-dimensions.xlsx');
   showToast('Exported label-dimensions.xlsx');
