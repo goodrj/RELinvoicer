@@ -13,36 +13,40 @@ if (!process.env.OPENAI_API_KEY) {
 
 const openai = new OpenAI();
 
-const EXTRACT_PROMPT = `You are analyzing a page from an engineering drawing of switchboard label layouts.
+const EXTRACT_PROMPT = `You are analyzing an engineering drawing of switchboard labels used in electrical switchboard manufacturing.
 
-The page contains rectangular boxes arranged in a grid or scattered layout. Each box represents a physical label to be manufactured.
+The page shows rectangular label outlines arranged on the page. Each rectangle is a label to be manufactured.
 
-YOUR TASK: Find every rectangular box that has dimension annotations showing its width and/or height in millimetres.
+═══ HOW DIMENSIONS ARE ANNOTATED ═══
+Dimension lines in these drawings follow standard engineering drafting convention:
+- A dimension line runs PARALLEL to the edge it is measuring, positioned OUTSIDE the box
+- It has arrows or tick marks at BOTH ends pointing to the edges being measured
+- The measurement number sits in the MIDDLE of that line
+- A horizontal dimension line (above or below the box) = WIDTH of that box in mm
+- A vertical dimension line (left or right of the box) = HEIGHT of that box in mm
+- Two labels that share the same dimension line have the same measurement for that dimension
 
-HOW TO IDENTIFY DIMENSIONS:
-- Dimension annotations appear as lines or arrows along the OUTSIDE edges of boxes
-- A number beside a horizontal arrow (top or bottom of box) = Width X in mm
-- A number beside a vertical arrow (left or right side of box) = Height Y in mm
-- The numbers are the ONLY thing you should read — ignore all other text
+═══ WHAT TO COMPLETELY IGNORE ═══
+These appear on every drawing and must NOT be read as dimensions:
+- Text INSIDE the box (label content, warning text, circuit descriptions)
+- Small numbers BELOW the box such as "5mm", "6mm", "10mm" — these are the engraving/text height specs
+- Words below the box such as "1 OFF", "2 OFF", "W-B", "R-W", "BLACK", "WHITE" — these are finish/quantity specs for the engraver
+- Any number that does not have a dimension line with arrows attached to it
 
-WHAT TO IGNORE:
-- Any text INSIDE boxes (part numbers, material codes, circuit labels, wiring descriptions)
-- Labels appearing BELOW boxes (e.g. "W-B", "5mm", "1 OFF", "BLACK", colour specs, material codes)
-- Only read the dimension arrows/numbers on the outside edges of boxes
+═══ HOW TO COUNT ═══
+- Each distinct rectangle on the page is one label
+- If two or more rectangles have the same Width × Height, count them as one entry with combined quantity
+- A shared dimension line means both labels share that measurement
 
-FOR EACH UNIQUE W×H COMBINATION:
-- Count exactly how many boxes of that size appear on this page
-- If the same W×H appears multiple times, sum all into one entry with total quantity
-
-RETURN ONLY this JSON — no markdown fences, no explanation, nothing else:
+═══ OUTPUT FORMAT ═══
+Return ONLY this JSON with no markdown, no explanation, nothing else:
 {"entries":[{"width":<number>,"height":<number>,"qty":<number>}]}
 
-If no dimension annotations are found anywhere on the page, return:
-{"entries":[]}`;
+If no annotated boxes are found: {"entries":[]}`;
 
 async function analyzeImage(base64Image) {
   const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'gpt-4o',
     max_tokens: 1024,
     messages: [{
       role: 'user',

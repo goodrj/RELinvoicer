@@ -87,7 +87,7 @@ async function loadPDF(file) {
 
 async function renderPage(pdf, pageNum, idx) {
   const page = await pdf.getPage(pageNum);
-  const viewport = page.getViewport({ scale: 1.5 });
+  const viewport = page.getViewport({ scale: 3.0 });
 
   // High-res canvas for API (PNG)
   const hiCanvas = document.createElement('canvas');
