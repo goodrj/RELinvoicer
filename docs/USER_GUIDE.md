@@ -68,7 +68,7 @@ When the analysis finishes, it keeps the final time on screen so you can see how
 
 ## Export Results
 
-Use `Copy TSV` when you want to paste straight into Excel or Google Sheets.
+Use `Copy TSV` when you want to paste straight into Excel or Google Sheets. It copies only the numeric result rows, without the table header or total row.
 
 Use `Export Excel` when you want an `.xlsx` file with a totals row.
 

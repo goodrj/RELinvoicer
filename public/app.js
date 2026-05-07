@@ -396,12 +396,7 @@ function getExportRows() {
 
 async function copyTsv() {
   const rows = getExportRows();
-  const total = rows.reduce((sum, row) => sum + row.Quantity, 0);
-  const lines = [
-    ['Quantity', 'Width X (mm)', 'Height Y (mm)'].join('\t'),
-    ...rows.map((row) => [row.Quantity, row['Width X (mm)'], row['Height Y (mm)']].join('\t')),
-    [total, 'Total labels', ''].join('\t')
-  ];
+  const lines = rows.map((row) => [row.Quantity, row['Width X (mm)'], row['Height Y (mm)']].join('\t'));
   await navigator.clipboard.writeText(lines.join('\n'));
   copyBtn.textContent = 'Copied';
   setTimeout(() => { copyBtn.textContent = 'Copy TSV'; }, 1200);
