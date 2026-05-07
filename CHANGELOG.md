@@ -3,6 +3,7 @@
 ## 1.0.0
 
 - Replaced the previous app with a local switchboard label dimension extractor.
+- Added DXF-first extraction from CAD geometry.
 - Added OpenAI vision analysis for CAD PDF page images.
 - Added CAD vector rectangle geometry correction.
 - Improved geometry correction so rectangle size can be calculated from CAD page scale when AI misses a dimension.

@@ -222,6 +222,32 @@ h3 {
   background: #fff;
 }
 
+.dxf-preview {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 132px;
+  padding: 20px;
+  background: #f4f8fc;
+  text-align: center;
+}
+
+.dxf-preview strong {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 48px;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.dxf-preview span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .thumb-footer {
   display: grid;
   gap: 8px;

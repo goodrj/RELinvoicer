@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 3192);
+const MILLIMETRES_INSUNITS = '4';
 
 app.use(express.json({ limit: '35mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -97,6 +98,188 @@ function normaliseLabels(labels) {
       inferredDimension: item.inferredDimension,
       evidence: item.evidence.slice(0, 3).join(' | ')
     }));
+}
+
+function readDxfPairs(dxfText) {
+  const lines = String(dxfText || '').split(/\r?\n/);
+  const pairs = [];
+  for (let index = 0; index < lines.length - 1; index += 2) {
+    pairs.push([lines[index].trim(), lines[index + 1].trimEnd()]);
+  }
+  return pairs;
+}
+
+function parseDxfHeader(pairs) {
+  const header = {};
+  let currentVariable = null;
+  let inHeader = false;
+
+  for (let index = 0; index < pairs.length; index += 1) {
+    const [code, value] = pairs[index];
+    if (code === '0' && value === 'SECTION' && pairs[index + 1]?.[0] === '2' && pairs[index + 1]?.[1] === 'HEADER') {
+      inHeader = true;
+      index += 1;
+      continue;
+    }
+    if (inHeader && code === '0' && value === 'ENDSEC') break;
+    if (!inHeader) continue;
+
+    if (code === '9') {
+      currentVariable = value;
+      header[currentVariable] = [];
+    } else if (currentVariable) {
+      header[currentVariable].push([code, value.trim()]);
+    }
+  }
+
+  return header;
+}
+
+function parseDxfEntities(pairs) {
+  const entities = [];
+  let inEntities = false;
+
+  for (let index = 0; index < pairs.length;) {
+    const [code, value] = pairs[index];
+    if (code === '0' && value === 'SECTION' && pairs[index + 1]?.[0] === '2' && pairs[index + 1]?.[1] === 'ENTITIES') {
+      inEntities = true;
+      index += 2;
+      continue;
+    }
+    if (code === '0' && value === 'ENDSEC') {
+      inEntities = false;
+      index += 1;
+      continue;
+    }
+    if (!inEntities || code !== '0') {
+      index += 1;
+      continue;
+    }
+
+    const entity = { type: value, pairs: [] };
+    index += 1;
+    while (index < pairs.length && pairs[index][0] !== '0') {
+      entity.pairs.push(pairs[index]);
+      index += 1;
+    }
+    entities.push(entity);
+  }
+
+  return entities;
+}
+
+function dxfValues(entity, code) {
+  return entity.pairs.filter(([pairCode]) => pairCode === code).map(([, value]) => value.trim());
+}
+
+function dxfValue(entity, code, fallback = '') {
+  return dxfValues(entity, code)[0] || fallback;
+}
+
+function dxfNumbers(entity, code) {
+  return dxfValues(entity, code)
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+}
+
+function snapDxfMillimetres(value) {
+  const rounded = Math.round(value);
+  return Math.abs(value - rounded) <= 0.02 ? rounded : Math.round(value * 100) / 100;
+}
+
+function extractDxfDimensions(entities) {
+  const dimensions = [];
+
+  for (const entity of entities) {
+    if (entity.type !== 'DIMENSION') continue;
+
+    const measured = dxfNumbers(entity, '42')[0];
+    if (Number.isFinite(measured) && measured > 0) {
+      dimensions.push(snapDxfMillimetres(measured));
+      continue;
+    }
+
+    const x1 = dxfNumbers(entity, '13')[0];
+    const y1 = dxfNumbers(entity, '23')[0];
+    const x2 = dxfNumbers(entity, '14')[0];
+    const y2 = dxfNumbers(entity, '24')[0];
+    if ([x1, y1, x2, y2].every(Number.isFinite)) {
+      dimensions.push(snapDxfMillimetres(Math.hypot(x2 - x1, y2 - y1)));
+    }
+  }
+
+  return dimensions;
+}
+
+function dxfDimensionMatches(value, dimensionValues) {
+  return dimensionValues.some((dimension) => Math.abs(dimension - value) <= 0.5);
+}
+
+function extractDxfRectangles(entities, dimensionValues) {
+  const rectangles = [];
+
+  for (const entity of entities) {
+    if (entity.type !== 'LWPOLYLINE') continue;
+    if (dxfValue(entity, '70') !== '1') continue;
+
+    const xs = dxfNumbers(entity, '10');
+    const ys = dxfNumbers(entity, '20');
+    if (xs.length !== 4 || ys.length !== 4) continue;
+
+    const rawWidth = Math.max(...xs) - Math.min(...xs);
+    const rawHeight = Math.max(...ys) - Math.min(...ys);
+    const width = snapDxfMillimetres(rawWidth);
+    const height = snapDxfMillimetres(rawHeight);
+    const longSide = Math.max(width, height);
+    const shortSide = Math.min(width, height);
+    const layer = dxfValue(entity, '8', '0');
+
+    const hasDimensionMatch = dxfDimensionMatches(longSide, dimensionValues) && dxfDimensionMatches(shortSide, dimensionValues);
+    const hasLabelSize = shortSide >= 10 && longSide >= 20 && longSide <= 500;
+    const isTinyAuxiliaryShape = longSide <= 20 && shortSide <= 20;
+
+    if (!hasLabelSize || !hasDimensionMatch || isTinyAuxiliaryShape) continue;
+
+    rectangles.push({
+      quantity: 1,
+      widthMm: longSide,
+      heightMm: shortSide,
+      sharedDimension: false,
+      inferredDimension: 'none',
+      evidence: `Read from DXF closed LWPOLYLINE on layer ${layer}.`
+    });
+  }
+
+  return rectangles;
+}
+
+function analyseDxf(dxfText) {
+  const pairs = readDxfPairs(dxfText);
+  const header = parseDxfHeader(pairs);
+  const entities = parseDxfEntities(pairs);
+  const units = header.$INSUNITS?.find(([code]) => code === '70')?.[1] || '';
+  const dimensionValues = extractDxfDimensions(entities);
+  const labels = normaliseLabels(extractDxfRectangles(entities, dimensionValues));
+  const remarks = [
+    {
+      level: units === MILLIMETRES_INSUNITS ? 'info' : 'warning',
+      message: units === MILLIMETRES_INSUNITS
+        ? 'DXF units are millimetres.'
+        : `DXF units are not explicitly millimetres. $INSUNITS=${units || 'missing'}.`
+    },
+    {
+      level: 'info',
+      message: `DXF analysis used ${labels.reduce((sum, item) => sum + item.quantity, 0)} closed label rectangle${labels.length === 1 ? '' : 's'} and ${dimensionValues.length} dimension value${dimensionValues.length === 1 ? '' : 's'}.`
+    }
+  ];
+
+  return {
+    pageNumber: 1,
+    confidence: labels.length ? 1 : 0,
+    notes: 'DXF extraction reads CAD geometry directly. No AI vision was used.',
+    remarks,
+    labels
+  };
 }
 
 // CAD-exported PDFs often still contain the original rectangle lines as vector
@@ -475,6 +658,17 @@ app.post('/api/analyse-page', async (req, res) => {
   } catch (error) {
     const message = error?.response?.data?.error?.message || error?.message || 'Analysis failed.';
     res.status(500).json({ error: message });
+  }
+});
+
+app.post('/api/analyse-dxf', async (req, res) => {
+  try {
+    const { dxfText } = req.body || {};
+    if (!dxfText) return res.status(400).json({ error: 'A DXF file is required.' });
+
+    res.json(analyseDxf(dxfText));
+  } catch (error) {
+    res.status(500).json({ error: error?.message || 'DXF analysis failed.' });
   }
 });
 

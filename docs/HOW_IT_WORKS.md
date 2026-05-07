@@ -10,12 +10,34 @@ The app is trying to answer one question:
 What rectangle sizes are on this drawing?
 ```
 
-It does that with two kinds of evidence:
+For DXF files, it does that with CAD data:
+
+1. Closed rectangle polylines.
+2. Dimension entities.
+3. Drawing units.
+
+For PDF files, it does that with two kinds of evidence:
 
 1. The numbers printed on the drawing.
 2. The actual rectangle shapes inside the PDF.
 
-Using both is stronger than using either one alone.
+Using CAD data is better than reading a picture. That is why DXF is preferred.
+
+## DXF Path
+
+DXF files are structured CAD files. They can contain real entities such as:
+
+- `LWPOLYLINE` for rectangles,
+- `DIMENSION` for measurements,
+- `TEXT` and `MTEXT` for label content.
+
+RELinvoicer reads closed 4-point `LWPOLYLINE` shapes, checks them against `DIMENSION` values, and converts them into label sizes.
+
+For DXF, no AI vision is needed.
+
+## PDF Fallback Path
+
+PDF is harder because it is a drawing output, not the original CAD data.
 
 ## Step 1: The Browser Renders The PDF
 

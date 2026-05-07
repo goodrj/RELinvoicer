@@ -21,6 +21,8 @@ const serverStatus = document.getElementById('serverStatus');
 let pdfjsLib;
 let loadedFileName = '';
 let loadedPdfDataBase64 = '';
+let loadedDxfText = '';
+let loadedFileType = '';
 let pages = [];
 let activeResults = new Map();
 let priorResults = new Map();
@@ -290,6 +292,11 @@ async function analysePage(page) {
 }
 
 async function analyseAll() {
+  if (loadedFileType === 'dxf') {
+    await analyseDxf();
+    return;
+  }
+
   beginAnalysis(`Analysis ongoing - 0 of ${pages.length} pages complete`);
   analyseAllBtn.disabled = true;
   for (let index = 0; index < pages.length; index += 1) {
@@ -302,15 +309,36 @@ async function analyseAll() {
   finishAnalysis(`Analysis finished for ${pages.length} page${pages.length === 1 ? '' : 's'}`);
 }
 
-// Each page is rendered twice: a small canvas for the visible thumbnail and a
-// larger hidden canvas for AI vision, where tiny dimension text is easier to read.
-async function renderPdf(file) {
-  const bytes = await file.arrayBuffer();
-  const copyForServer = bytes.slice(0);
-  loadedPdfDataBase64 = arrayBufferToBase64(copyForServer);
-  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+async function analyseDxf() {
+  beginAnalysis('Analysis ongoing - reading DXF geometry');
+  analyseAllBtn.disabled = true;
 
-  loadedFileName = file.name;
+  try {
+    const response = await fetch('/api/analyse-dxf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dxfText: loadedDxfText })
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'DXF analysis failed');
+
+    activeResults.set(1, data);
+    renderResults();
+    renderReview();
+    finishAnalysis('DXF analysis finished');
+  } catch (error) {
+    analysisStatus.textContent = error.message;
+    finishAnalysis('DXF analysis failed');
+  } finally {
+    analyseAllBtn.disabled = false;
+  }
+}
+
+function resetLoadedState() {
+  loadedPdfDataBase64 = '';
+  loadedDxfText = '';
+  loadedFileType = '';
   pages = [];
   activeResults.clear();
   priorResults.clear();
@@ -319,6 +347,51 @@ async function renderPdf(file) {
   clearInterval(analysisTimerId);
   analysisTimerId = 0;
   analysisStartedAt = 0;
+}
+
+async function renderDxf(file) {
+  resetLoadedState();
+  loadedFileName = file.name;
+  loadedFileType = 'dxf';
+  loadedDxfText = await file.text();
+
+  const card = document.createElement('div');
+  card.className = 'thumb-card dxf-card';
+  card.dataset.pageCard = '1';
+  card.insertAdjacentHTML('beforeend', `
+    <div class="dxf-preview">
+      <strong>DXF</strong>
+      <span>CAD geometry will be read directly.</span>
+    </div>
+    <div class="thumb-footer">
+      <div class="thumb-row">
+        <strong>Drawing</strong>
+        <button type="button">Re-analyse</button>
+      </div>
+      <div class="thumb-status">Ready</div>
+    </div>
+  `);
+  card.querySelector('button').addEventListener('click', analyseDxf);
+  thumbList.appendChild(card);
+
+  fileMeta.textContent = `${file.name} - DXF`;
+  analyseAllBtn.disabled = false;
+  clearBtn.disabled = false;
+  renderResults();
+  renderReview();
+}
+
+// Each page is rendered twice: a small canvas for the visible thumbnail and a
+// larger hidden canvas for AI vision, where tiny dimension text is easier to read.
+async function renderPdf(file) {
+  resetLoadedState();
+  const bytes = await file.arrayBuffer();
+  const copyForServer = bytes.slice(0);
+  loadedPdfDataBase64 = arrayBufferToBase64(copyForServer);
+  loadedFileType = 'pdf';
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+
+  loadedFileName = file.name;
 
   for (let index = 1; index <= pdf.numPages; index += 1) {
     const page = await pdf.getPage(index);
@@ -362,12 +435,8 @@ async function renderPdf(file) {
 
 function clearAll() {
   loadedFileName = '';
-  loadedPdfDataBase64 = '';
-  pages = [];
-  activeResults.clear();
-  priorResults.clear();
-  thumbList.innerHTML = '';
-  fileMeta.textContent = 'No PDF loaded';
+  resetLoadedState();
+  fileMeta.textContent = 'No drawing loaded';
   analyseAllBtn.disabled = true;
   clearBtn.disabled = true;
   pdfInput.value = '';
@@ -412,7 +481,13 @@ function exportExcel() {
   }]);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Label Sizes');
-  XLSX.writeFile(workbook, `${loadedFileName.replace(/\.pdf$/i, '') || 'label-dimensions'}.xlsx`);
+  XLSX.writeFile(workbook, `${loadedFileName.replace(/\.(pdf|dxf)$/i, '') || 'label-dimensions'}.xlsx`);
+}
+
+async function loadDrawingFile(file) {
+  if (!file) return;
+  if (/\.dxf$/i.test(file.name)) await renderDxf(file);
+  else await renderPdf(file);
 }
 
 dropZone.addEventListener('click', () => pdfInput.click());
@@ -431,12 +506,12 @@ dropZone.addEventListener('drop', async (event) => {
   event.preventDefault();
   dropZone.classList.remove('dragging');
   const [file] = event.dataTransfer.files;
-  if (file) await renderPdf(file);
+  await loadDrawingFile(file);
 });
 
 pdfInput.addEventListener('change', async () => {
   const [file] = pdfInput.files;
-  if (file) await renderPdf(file);
+  await loadDrawingFile(file);
 });
 
 analyseAllBtn.addEventListener('click', analyseAll);

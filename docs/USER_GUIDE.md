@@ -20,7 +20,7 @@ If the app says the API key is missing, open `.env` and add your OpenAI API key.
 
 ## Analyse A PDF
 
-1. Drop the PDF onto the upload box.
+1. Drop the DXF or PDF onto the upload box.
 2. Wait for the page thumbnails to appear.
 3. Click `Analyse`.
 4. Watch the analysis status. It will say analysis is ongoing and show elapsed time.
@@ -71,6 +71,12 @@ When the analysis finishes, it keeps the final time on screen so you can see how
 Use `Copy TSV` when you want to paste straight into Excel or Google Sheets. It copies only the numeric result rows, without the table header or total row.
 
 Use `Export Excel` when you want an `.xlsx` file with a totals row.
+
+## DXF Or PDF?
+
+Use DXF whenever you have it. DXF reads the CAD rectangles directly and is more accurate.
+
+Use PDF only when DXF is not available.
 
 ## Re-Analyse One Page
 

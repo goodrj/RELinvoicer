@@ -1,12 +1,12 @@
 # RELinvoicer
 
-RELinvoicer is a local web app that reads switchboard label drawings from PDF files and turns them into a clean spreadsheet-ready size list.
+RELinvoicer is a local web app that reads switchboard label drawings from DXF or PDF files and turns them into a clean spreadsheet-ready size list.
 
-It is built for CAD-exported drawings where the text is not selectable. The app uses OpenAI vision to read the dimension numbers, then checks the actual CAD rectangle geometry in the PDF so shared dimensions are handled more reliably.
+DXF is the preferred workflow because it contains real CAD geometry. PDF is kept as a fallback for older drawing exports.
 
 ## What It Does
 
-Drop in a PDF like an electrical switchboard label layout. RELinvoicer gives you one combined answer:
+Drop in a DXF drawing like an electrical switchboard label layout. RELinvoicer gives you one combined answer:
 
 ```text
 Quantity    Width X (mm)    Height Y (mm)
@@ -52,7 +52,7 @@ On Windows, you can also run:
 
 ## How To Use It
 
-1. Drag a PDF onto the page, or click the upload box.
+1. Drag a DXF or PDF onto the page, or click the upload box.
 2. Check the page thumbnails.
 3. Click `Analyse`.
 4. Watch the live status and elapsed timer.
@@ -64,7 +64,13 @@ If a page looks wrong, click `Re-analyse` on that page.
 
 ## How It Thinks
 
-The app uses three checks, like three people checking the same drawing:
+For DXF files, the app reads real CAD entities directly:
+
+1. Closed `LWPOLYLINE` rectangles become label boxes.
+2. `DIMENSION` entities confirm the drawing is dimensioned in millimetres.
+3. The rectangle geometry becomes the source of truth.
+
+For PDF files, the app uses three checks, like three people checking the same drawing:
 
 1. Vision reads the page image.
    It looks for dimension numbers outside the label rectangles.
@@ -102,7 +108,7 @@ RELinvoicer/
     USER_GUIDE.md       Plain-English user guide
     HOW_IT_WORKS.md     Beginner-friendly technical explanation
     TROUBLESHOOTING.md  Common problems and fixes
-  server.js         Local API, OpenAI call, CAD geometry correction
+  server.js         Local API, DXF parser, OpenAI call, CAD geometry correction
   start.ps1         Windows helper script
   .env.example      Example settings
 ```
@@ -119,6 +125,8 @@ npm run smoke    # start a test server and check it responds
 ## Privacy
 
 Your OpenAI API key stays in `.env` on your machine. The browser does not receive the key.
+
+DXF files are analysed locally by the backend. No OpenAI call is used for DXF analysis.
 
 PDF page images are sent to OpenAI for analysis. The original PDF bytes are also sent from the browser to the local backend so the backend can read CAD vector rectangles. They are not stored by this app.
 
