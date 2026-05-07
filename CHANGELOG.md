@@ -5,6 +5,7 @@
 - Replaced the previous app with a local switchboard label dimension extractor.
 - Added OpenAI vision analysis for CAD PDF page images.
 - Added CAD vector rectangle geometry correction.
+- Improved geometry correction so rectangle size can be calculated from CAD page scale when AI misses a dimension.
 - Added remarks for shared and inferred dimensions.
 - Added live analysis status and elapsed-time display.
 - Added TSV copy and Excel export.

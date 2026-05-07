@@ -186,9 +186,50 @@ function dimensionCandidates(labels) {
   return pairs;
 }
 
-// Geometry correction is deliberately conservative. It only replaces the AI
-// answer when every detected CAD rectangle can be matched to a dimension pair
-// using both shape ratio and the shared drawing scale for the page.
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function estimatePageScale(candidateMatches) {
+  if (!candidateMatches.length) return 0;
+
+  let bestCluster = [];
+  for (const match of candidateMatches) {
+    const cluster = candidateMatches.filter((candidate) => (
+      Math.abs(candidate.scale - match.scale) / match.scale <= 0.08
+    ));
+    if (cluster.length > bestCluster.length) bestCluster = cluster;
+  }
+
+  return median(bestCluster.map((match) => match.scale));
+}
+
+function snapMillimetres(value) {
+  const snapped = Math.round(value / 5) * 5;
+  return snapped > 0 ? snapped : Math.round(value);
+}
+
+function geometrySizeFromScale(rectangle, pageScale) {
+  const longSide = Math.max(rectangle.vectorWidth, rectangle.vectorHeight);
+  const shortSide = Math.min(rectangle.vectorWidth, rectangle.vectorHeight);
+  const rawWidth = longSide / pageScale;
+  const rawHeight = shortSide / pageScale;
+  const widthMm = snapMillimetres(rawWidth);
+  const heightMm = snapMillimetres(rawHeight);
+
+  const widthError = Math.abs(widthMm - rawWidth) / rawWidth;
+  const heightError = Math.abs(heightMm - rawHeight) / rawHeight;
+  if (widthError > 0.06 || heightError > 0.06) return null;
+
+  return { widthMm, heightMm };
+}
+
+// Geometry correction is deliberately conservative. It uses AI-read dimensions
+// to estimate the CAD page scale, then calculates each rectangle size from the
+// actual vector box. This lets the app recover sizes the AI missed, such as
+// 200 x 120, when the rectangle geometry clearly shows them.
 function geometryCorrectPayload(payload, rectangles) {
   if (!rectangles.length || !(payload.labels || []).length) return payload;
 
@@ -211,8 +252,9 @@ function geometryCorrectPayload(payload, rectangles) {
 
   if (!candidateMatches.length) return payload;
 
-  const sortedScales = candidateMatches.map((match) => match.scale).sort((left, right) => left - right);
-  const globalScale = sortedScales[Math.floor(sortedScales.length / 2)];
+  const globalScale = estimatePageScale(candidateMatches);
+  if (!globalScale) return payload;
+
   const matched = [];
 
   for (const rectangle of rectangles) {
@@ -223,7 +265,17 @@ function geometryCorrectPayload(payload, rectangles) {
       if (!best || score < best.score) best = { ...match.pair, score, scale: match.scale };
     }
 
-    if (best) {
+    const geometrySize = geometrySizeFromScale(rectangle, globalScale);
+    if (geometrySize) {
+      matched.push({
+        quantity: 1,
+        widthMm: geometrySize.widthMm,
+        heightMm: geometrySize.heightMm,
+        sharedDimension: false,
+        inferredDimension: 'none',
+        evidence: `Calculated from CAD rectangle using page scale ${globalScale.toFixed(2)}.`
+      });
+    } else if (best) {
       matched.push({
         quantity: 1,
         widthMm: best.widthMm,
