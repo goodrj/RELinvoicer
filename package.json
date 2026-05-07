@@ -1,9 +1,12 @@
 {
-  "name": "switchboard-label-dimension-extractor",
-  "version": "0.1.0",
+  "name": "relinvoicer",
+  "version": "1.0.0",
+  "description": "Local AI-assisted switchboard label dimension extractor for CAD PDF drawings.",
   "private": true,
   "type": "module",
   "scripts": {
+    "check": "node --check server.js && node --check public/app.js && node --check scripts/smoke-test.mjs",
+    "smoke": "node scripts/smoke-test.mjs",
     "start": "node server.js",
     "dev": "node server.js"
   },

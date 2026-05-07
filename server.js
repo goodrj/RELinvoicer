@@ -13,6 +13,8 @@ const port = Number(process.env.PORT || 3192);
 app.use(express.json({ limit: '35mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// OpenAI is asked to return this exact shape, so the browser can build tables
+// without trying to parse a paragraph of AI-written text.
 const schema = {
   type: 'object',
   additionalProperties: false,
@@ -97,6 +99,9 @@ function normaliseLabels(labels) {
     }));
 }
 
+// CAD-exported PDFs often still contain the original rectangle lines as vector
+// paths. Reading those paths lets us check the AI result against the actual box
+// shapes instead of trusting nearby annotation text blindly.
 async function extractVectorRectangles(pdfDataBase64, pageNumber) {
   if (!pdfDataBase64) return [];
 
@@ -181,6 +186,9 @@ function dimensionCandidates(labels) {
   return pairs;
 }
 
+// Geometry correction is deliberately conservative. It only replaces the AI
+// answer when every detected CAD rectangle can be matched to a dimension pair
+// using both shape ratio and the shared drawing scale for the page.
 function geometryCorrectPayload(payload, rectangles) {
   if (!rectangles.length || !(payload.labels || []).length) return payload;
 
@@ -262,6 +270,7 @@ function shouldAudit(payload) {
   });
 }
 
+// First pass: ask vision to read dimensions from the rendered page image.
 async function extractPage(client, model, pageNumber, imageDataUrl) {
   return client.responses.create({
     model,
@@ -325,6 +334,8 @@ async function extractPage(client, model, pageNumber, imageDataUrl) {
   });
 }
 
+// Second pass: ask vision to re-check cases that are historically easy to get
+// wrong, especially very thin labels that borrow a long shared dimension.
 async function auditPage(client, model, pageNumber, imageDataUrl, initialPayload) {
   return client.responses.create({
     model,

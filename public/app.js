@@ -27,6 +27,8 @@ async function initPdfJs() {
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
 }
 
+// The browser only asks whether the local server is ready. The OpenAI API key
+// stays in .env on the server and is never sent to this frontend file.
 async function checkServer() {
   try {
     const response = await fetch('/api/health');
@@ -76,6 +78,8 @@ function mergeAllResults() {
   return [...grouped.values()].sort((a, b) => b.widthMm - a.widthMm || b.heightMm - a.heightMm);
 }
 
+// Remarks are the app's way of saying, "I used extra judgement here."
+// They are shown to the user, but they are not included in the spreadsheet.
 function getRemarks() {
   const remarks = [];
 
@@ -247,6 +251,8 @@ async function analyseAll() {
   analyseAllBtn.disabled = pages.length === 0;
 }
 
+// Each page is rendered twice: a small canvas for the visible thumbnail and a
+// larger hidden canvas for AI vision, where tiny dimension text is easier to read.
 async function renderPdf(file) {
   const bytes = await file.arrayBuffer();
   const copyForServer = bytes.slice(0);
