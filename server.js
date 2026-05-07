@@ -329,10 +329,9 @@ function extractDxfRectangles(entities, dimensionValues) {
     const layer = dxfValue(entity, '8', '0');
 
     const hasDimensionMatch = dxfDimensionMatches(longSide, dimensionValues) && dxfDimensionMatches(shortSide, dimensionValues);
-    const hasLabelSize = shortSide >= 10 && longSide >= 20 && longSide <= 500;
-    const isTinyAuxiliaryShape = longSide <= 20 && shortSide <= 20;
+    const hasLabelSize = shortSide >= 3 && longSide >= 8 && longSide <= 500;
 
-    if (!hasLabelSize || !hasDimensionMatch || isTinyAuxiliaryShape) continue;
+    if (!hasLabelSize || !hasDimensionMatch) continue;
 
     const quantity = quantityForDxfRectangle({
       x1: Math.min(...xs),
