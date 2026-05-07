@@ -106,6 +106,18 @@ async function renderPage(pdf, pageNum, idx) {
 
   state.pages[idx].base64 = base64;
 
+  // Extract text items directly from PDF (exact numbers, no vision guessing)
+  const textContent = await page.getTextContent();
+  const pageViewport = page.getViewport({ scale: 1.0 });
+  state.pages[idx].textItems = textContent.items
+    .filter(item => item.str.trim().length > 0)
+    .map(item => ({
+      text: item.str.trim(),
+      // Normalise to top-left origin so coordinates make intuitive sense
+      x: Math.round(item.transform[4]),
+      y: Math.round(pageViewport.height - item.transform[5])
+    }));
+
   // Build thumb card
   const card = document.createElement('div');
   card.className = 'thumb-card';
@@ -148,7 +160,7 @@ async function analyzeAll() {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageImage: page.base64, pageIndex: page.index })
+        body: JSON.stringify({ pageImage: page.base64, textItems: page.textItems, pageIndex: page.index })
       });
       const data = await res.json();
       applyPageResult(data);
@@ -177,7 +189,7 @@ async function analyseOnePage(idx) {
     const res = await fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pageImage: page.base64, pageIndex: idx })
+      body: JSON.stringify({ pageImage: page.base64, textItems: page.textItems, pageIndex: idx })
     });
     const data = await res.json();
     applyPageResult(data);

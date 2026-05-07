@@ -13,36 +13,54 @@ if (!process.env.OPENAI_API_KEY) {
 
 const openai = new OpenAI();
 
-const EXTRACT_PROMPT = `You are reading an engineering drawing of switchboard labels. Extract every label's dimensions by following these four steps in order.
+const EXTRACT_PROMPT_BASE = `You are reading an engineering drawing of switchboard labels.
 
-━━━ STEP 1 — LIST EVERY DIMENSION LINE ━━━
-Scan the whole page and find every dimension annotation. A dimension annotation is a line with arrows or tick marks at both ends, with a number in the middle. For each one you find, note:
-  • The number value
-  • Direction: horizontal arrow (↔) = this is a WIDTH measurement, vertical arrow (↕) = this is a HEIGHT measurement
-  • Which rectangle(s) the arrows point to at both ends
+━━━ YOUR GROUND-TRUTH NUMBERS ━━━
+A list of every number extracted directly from the PDF text layer is provided below. These are exact — do NOT read numbers from the image pixels. Only use the image to understand the spatial layout (which box each number belongs to, and whether a line is horizontal or vertical).
 
-━━━ STEP 2 — HANDLE SHARED DIMENSION LINES ━━━
-This is critical: a single dimension line can span across two or more adjacent boxes simultaneously. This is called common dimensioning and is standard CAD practice. When one dimension line's arrows span the edges of multiple boxes, EVERY one of those boxes shares that measurement — even if those individual boxes have no separate dimension line of their own for that direction. Do not skip a box just because it lacks its own dedicated dimension line.
+{TEXT_ITEMS}
 
-━━━ STEP 3 — ASSIGN DIMENSIONS TO EACH BOX ━━━
+━━━ HOW TO USE THESE NUMBERS ━━━
+Each number in the list has an (x, y) coordinate (origin = top-left of page, y increases downward).
+- Numbers positioned OUTSIDE rectangle borders are dimension annotations
+- Numbers positioned INSIDE rectangles are label content — ignore them
+- Small standalone numbers like 5, 6, 10 positioned below boxes are engraving text-height specs — ignore them
+- Words like "1 OFF", "W-B", "R-W", "BLACK" are finish specs — ignore them
+
+━━━ DIMENSION LINE RULES ━━━
+- A horizontal dimension line (left-right) outside a box = WIDTH of that box
+- A vertical dimension line (up-down) outside a box = HEIGHT of that box
+- ONE dimension line can span multiple adjacent boxes simultaneously (common/shared dimensioning). If a single dimension line covers two or more boxes, ALL of those boxes share that value — even if they have no separate line of their own for that direction.
+
+━━━ TASK ━━━
 For every rectangle that has at least one dimension annotation (directly or via a shared line):
-  • Width X (mm)  = the horizontal dimension line that covers this box
-  • Height Y (mm) = the vertical dimension line that covers this box
-  • Count how many identical W×H boxes appear on the page
+  • Width X (mm)  = value of the horizontal dimension covering this box
+  • Height Y (mm) = value of the vertical dimension covering this box
+  • Qty = how many identical W×H boxes appear on the page
 
-━━━ WHAT TO IGNORE ━━━
-  • All text inside boxes (warning messages, circuit labels, manufacturer data)
-  • Small numbers below boxes like "5mm", "6mm", "10mm" — these are engraving text-height specs, NOT label dimensions
-  • Words below boxes like "1 OFF", "2 OFF", "W-B", "R-W", "BLACK" — these are finish/quantity specs for the engraver, NOT dimensions
-  • Any number without a dimension line and arrows attached
-
-━━━ STEP 4 — OUTPUT ━━━
-Return ONLY this JSON. No markdown fences. No explanation. Nothing else.
+━━━ OUTPUT ━━━
+Return ONLY this JSON. No markdown. No explanation.
 {"entries":[{"width":<number>,"height":<number>,"qty":<number>}]}
 
-If no annotated boxes exist: {"entries":[]}`;
+If no annotated boxes: {"entries":[]}`;
 
-async function analyzeImage(base64Image) {
+function buildPrompt(textItems) {
+  // Only pass numeric-looking tokens — strips all label content and noise
+  const numbers = (textItems || [])
+    .filter(item => /^\d+(\.\d+)?$/.test(item.text))
+    .map(item => `  "${item.text}" at (${item.x}, ${item.y})`)
+    .join('\n');
+
+  const textBlock = numbers.length > 0
+    ? `Numeric text items found in PDF (exact values, with page coordinates):\n${numbers}`
+    : 'No text extracted — rely on image only.';
+
+  return EXTRACT_PROMPT_BASE.replace('{TEXT_ITEMS}', textBlock);
+}
+
+async function analyzeImage(base64Image, textItems) {
+  const prompt = buildPrompt(textItems);
+
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     max_tokens: 1024,
@@ -53,7 +71,7 @@ async function analyzeImage(base64Image) {
           type: 'image_url',
           image_url: { url: `data:image/png;base64,${base64Image}`, detail: 'high' }
         },
-        { type: 'text', text: EXTRACT_PROMPT }
+        { type: 'text', text: prompt }
       ]
     }]
   });
@@ -85,13 +103,13 @@ function sortByQtyThenArea(entries) {
 }
 
 app.post('/api/analyze', async (req, res) => {
-  const { pageImage, pageIndex } = req.body;
+  const { pageImage, textItems, pageIndex } = req.body;
   if (!pageImage) return res.status(400).json({ error: 'pageImage required' });
 
   try {
     const [run1, run2] = await Promise.all([
-      analyzeImage(pageImage),
-      analyzeImage(pageImage)
+      analyzeImage(pageImage, textItems),
+      analyzeImage(pageImage, textItems)
     ]);
 
     const match = entriesEqual(run1, run2);
