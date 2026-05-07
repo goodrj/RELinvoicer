@@ -1,17 +1,10 @@
-# Relec Invoicer — start script
-# $env:OPENAI_API_KEY = "sk-..."
+Set-Location $PSScriptRoot
 
-if (-not $env:OPENAI_API_KEY) {
-    Write-Host ""
-    Write-Host "  ERROR: OPENAI_API_KEY is not set." -ForegroundColor Red
-    Write-Host "  Set it first:" -ForegroundColor Yellow
-    Write-Host '  $env:OPENAI_API_KEY = "sk-..."' -ForegroundColor Cyan
-    Write-Host ""
-    exit 1
+if (-not (Test-Path -LiteralPath ".env")) {
+  Copy-Item -LiteralPath ".env.example" -Destination ".env"
+  Write-Host "Created .env. Add your OPENAI_API_KEY, then run this script again." -ForegroundColor Yellow
+  notepad ".env"
+  exit 1
 }
 
-Write-Host ""
-Write-Host "  Starting Relec Invoicer..." -ForegroundColor Cyan
-Write-Host "  Open: http://localhost:3001" -ForegroundColor Green
-Write-Host ""
-node "$PSScriptRoot\server.js"
+npm start

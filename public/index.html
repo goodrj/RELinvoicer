@@ -1,99 +1,96 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Relec Invoicer — Label Dimension Extractor</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-<div class="app">
-  <header>
-    <div class="logo">
-      <div class="logo-icon">⚡</div>
-      <div>
-        <h1>Relec Invoicer</h1>
-        <p>Label dimension extractor</p>
-      </div>
-    </div>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Switchboard Label Extractor</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Switchboard manufacturing</p>
+          <h1>Label Dimension Extractor</h1>
+        </div>
+        <div class="status-pill" id="serverStatus">Checking API</div>
+      </header>
 
-  <!-- Upload -->
-  <div class="upload-zone" id="uploadZone">
-    <input type="file" id="fileInput" accept=".pdf" />
-    <div class="upload-icon">📄</div>
-    <h2>Drop a PDF here, or click to browse</h2>
-    <p>Engineering drawings with dimension annotations</p>
-  </div>
+      <section class="workspace">
+        <aside class="pages-panel">
+          <label class="drop-zone" id="dropZone">
+            <input id="pdfInput" type="file" accept="application/pdf" hidden />
+            <span class="drop-icon">PDF</span>
+            <strong>Drop drawing PDF here</strong>
+            <small>or click to choose a file</small>
+          </label>
 
-  <div id="fileBar" style="display:none" class="file-bar">
-    <span id="fileName" class="file-bar-name"></span>
-    <span id="fileMeta" class="file-bar-meta"></span>
-    <button class="btn btn-ghost" id="clearBtn" style="padding:5px 12px;font-size:12px">✕ Clear</button>
-  </div>
+          <div class="file-meta" id="fileMeta">No PDF loaded</div>
+          <div class="page-actions">
+            <button id="analyseAllBtn" disabled>Analyse</button>
+            <button id="clearBtn" disabled>Clear</button>
+          </div>
+          <div class="thumb-list" id="thumbList"></div>
+        </aside>
 
-  <!-- Thumbnails -->
-  <div class="thumbnails-section" id="thumbnailsSection" style="display:none">
-    <div class="section-header">
-      <span class="section-title">Pages</span>
-      <span id="pageCount" style="font-size:12px;color:var(--text-muted)"></span>
-    </div>
-    <div class="thumbnails-grid" id="thumbnailsGrid"></div>
-  </div>
+        <section class="results-panel">
+          <div class="result-header">
+            <div>
+              <p class="eyebrow">Consolidated answer</p>
+              <h2>Unique label sizes</h2>
+            </div>
+            <div class="total-box">
+              <span>Total labels</span>
+              <strong id="totalCount">0</strong>
+            </div>
+          </div>
 
-  <!-- Controls -->
-  <div class="controls" id="controls" style="display:none">
-    <button class="btn btn-primary" id="analyzeBtn" disabled>
-      <span id="analyzeBtnIcon">▶</span>
-      <span id="analyzeBtnText">Analyze All Pages</span>
-    </button>
-    <span id="progressText" style="font-size:12px;color:var(--text-muted)"></span>
-  </div>
+          <div class="toolbar">
+            <button id="copyBtn" disabled>Copy TSV</button>
+            <button id="exportBtn" disabled>Export Excel</button>
+          </div>
 
-  <!-- Results -->
-  <div class="results-section" id="resultsSection" style="display:none">
-    <div class="results-header">
-      <span class="section-title">Extracted Dimensions</span>
-      <div class="results-actions">
-        <button class="btn btn-ghost" id="copyBtn">
-          📋 Copy Numbers
-        </button>
-        <button class="btn btn-ghost" id="exportBtn">
-          ⬇ Export .xlsx
-        </button>
-      </div>
-    </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Quantity</th>
+                  <th>Width X (mm)</th>
+                  <th>Height Y (mm)</th>
+                </tr>
+              </thead>
+              <tbody id="resultsBody">
+                <tr><td colspan="3" class="empty">Upload a PDF, then analyse the drawing pages.</td></tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td id="footerQty">0</td>
+                  <td colspan="2">Total labels</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
 
-    <div class="table-wrap">
-      <table id="resultsTable">
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Qty</th>
-            <th>Width X (mm)</th>
-            <th>Height Y (mm)</th>
-            <th>Pages</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="resultsBody"></tbody>
-      </table>
-    </div>
+          <div class="remarks-panel" id="remarksPanel" hidden>
+            <div>
+              <p class="eyebrow">Analysis remarks</p>
+              <h3>Shared or inferred dimensions</h3>
+            </div>
+            <ul id="remarksList"></ul>
+          </div>
 
-    <div class="total-bar" id="totalBar">
-      <span class="total-bar-label">Confirmed quantity total</span>
-      <span class="total-bar-value" id="totalValue">0</span>
-    </div>
-  </div>
-</div>
+          <div class="review-panel" id="reviewPanel" hidden>
+            <div>
+              <p class="eyebrow">Needs review</p>
+              <h3>Different runs found different results</h3>
+            </div>
+            <div id="reviewContent"></div>
+          </div>
+        </section>
+      </section>
+    </main>
 
-<!-- PDF.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<!-- SheetJS -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
-<script src="app.js"></script>
-</body>
+    <script src="/app.js" type="module"></script>
+  </body>
 </html>

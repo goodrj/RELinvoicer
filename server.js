@@ -1,135 +1,428 @@
-const express = require('express');
-const OpenAI = require('openai');
-const path = require('path');
+import 'dotenv/config';
+import express from 'express';
+import OpenAI from 'openai';
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const app = express();
-app.use(express.json({ limit: '50mb' }));
+const port = Number(process.env.PORT || 3192);
+
+app.use(express.json({ limit: '35mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-if (!process.env.OPENAI_API_KEY) {
-  console.warn('WARNING: OPENAI_API_KEY not set — AI fallback disabled. Fine for CAD vector PDFs.');
+const schema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['pageNumber', 'labels', 'remarks', 'notes', 'confidence'],
+  properties: {
+    pageNumber: { type: 'integer' },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
+    notes: { type: 'string' },
+    remarks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['level', 'message'],
+        properties: {
+          level: { type: 'string', enum: ['info', 'warning'] },
+          message: { type: 'string' }
+        }
+      }
+    },
+    labels: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['quantity', 'widthMm', 'heightMm', 'evidence', 'sharedDimension', 'inferredDimension'],
+        properties: {
+          quantity: { type: 'integer', minimum: 1 },
+          widthMm: { type: 'number', minimum: 1 },
+          heightMm: { type: 'number', minimum: 1 },
+          sharedDimension: { type: 'boolean' },
+          inferredDimension: {
+            type: 'string',
+            enum: ['none', 'width', 'height', 'both']
+          },
+          evidence: { type: 'string' }
+        }
+      }
+    }
+  }
+};
+
+function normaliseLabels(labels) {
+  const grouped = new Map();
+
+  for (const item of labels || []) {
+    const a = Number(item.widthMm);
+    const b = Number(item.heightMm);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+
+    const width = Math.max(a, b);
+    const height = Math.min(a, b);
+    const key = `${width}x${height}`;
+    const prior = grouped.get(key) || {
+      quantity: 0,
+      widthMm: width,
+      heightMm: height,
+      evidence: [],
+      sharedDimension: false,
+      inferredDimension: 'none',
+      inferredEvidence: []
+    };
+
+    prior.quantity += Math.max(1, Number(item.quantity || 1));
+    prior.sharedDimension = prior.sharedDimension || Boolean(item.sharedDimension);
+    if (item.inferredDimension && item.inferredDimension !== 'none') {
+      prior.inferredDimension = prior.inferredDimension === 'none'
+        ? item.inferredDimension
+        : 'both';
+      prior.inferredEvidence.push(String(item.inferredDimension));
+    }
+    if (item.evidence) prior.evidence.push(String(item.evidence));
+    grouped.set(key, prior);
+  }
+
+  return [...grouped.values()]
+    .sort((left, right) => right.widthMm - left.widthMm || right.heightMm - left.heightMm)
+    .map((item) => ({
+      ...item,
+      inferredDimension: item.inferredDimension,
+      evidence: item.evidence.slice(0, 3).join(' | ')
+    }));
 }
 
-const openai = process.env.OPENAI_API_KEY ? new OpenAI() : null;
+async function extractVectorRectangles(pdfDataBase64, pageNumber) {
+  if (!pdfDataBase64) return [];
 
-const EXTRACT_PROMPT_BASE = `You are reading an engineering drawing of switchboard labels.
+  const bytes = Uint8Array.from(Buffer.from(pdfDataBase64, 'base64'));
+  const doc = await pdfjs.getDocument({ data: bytes, disableWorker: true }).promise;
+  const page = await doc.getPage(Number(pageNumber || 1));
+  const opList = await page.getOperatorList();
+  const opNames = Object.fromEntries(Object.entries(pdfjs.OPS).map(([key, value]) => [value, key]));
+  const rectangles = [];
 
-━━━ YOUR GROUND-TRUTH NUMBERS ━━━
-A list of every number extracted directly from the PDF text layer is provided below. These are exact — do NOT read numbers from the image pixels. Only use the image to understand the spatial layout (which box each number belongs to, and whether a line is horizontal or vertical).
+  for (let index = 0; index < opList.fnArray.length; index += 1) {
+    if (opNames[opList.fnArray[index]] !== 'constructPath') continue;
 
-{TEXT_ITEMS}
+    const pathData = opList.argsArray[index]?.[1];
+    if (!pathData) continue;
 
-━━━ HOW TO USE THESE NUMBERS ━━━
-Each number in the list has an (x, y) coordinate (origin = top-left of page, y increases downward).
-- Numbers positioned OUTSIDE rectangle borders are dimension annotations
-- Numbers positioned INSIDE rectangles are label content — ignore them
-- Small standalone numbers like 5, 6, 10 positioned below boxes are engraving text-height specs — ignore them
-- Words like "1 OFF", "W-B", "R-W", "BLACK" are finish specs — ignore them
+    const rawValues = Array.isArray(pathData) && typeof pathData[0] === 'object'
+      ? pathData[0]
+      : pathData;
+    const values = Array.from(rawValues);
+    const points = [];
+    let closed = false;
 
-━━━ DIMENSION LINE RULES ━━━
-- A horizontal dimension line (left-right) outside a box = WIDTH of that box
-- A vertical dimension line (up-down) outside a box = HEIGHT of that box
-- ONE dimension line can span multiple adjacent boxes simultaneously (common/shared dimensioning). If a single dimension line covers two or more boxes, ALL of those boxes share that value — even if they have no separate line of their own for that direction.
+    for (let cursor = 0; cursor < values.length;) {
+      const command = values[cursor];
+      if ((command === 0 || command === 1) && cursor + 2 < values.length) {
+        points.push({ x: Number(values[cursor + 1]), y: Number(values[cursor + 2]) });
+        cursor += 3;
+      } else if (command === 4) {
+        closed = true;
+        cursor += 1;
+      } else {
+        break;
+      }
+    }
 
-━━━ TASK ━━━
-For every rectangle that has at least one dimension annotation (directly or via a shared line):
-  • Width X (mm)  = value of the horizontal dimension covering this box
-  • Height Y (mm) = value of the vertical dimension covering this box
-  • Qty = how many identical W×H boxes appear on the page
+    if (!closed || points.length !== 4) continue;
 
-━━━ OUTPUT ━━━
-Return ONLY this JSON. No markdown. No explanation.
-{"entries":[{"width":<number>,"height":<number>,"qty":<number>}]}
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const width = Math.max(...xs) - Math.min(...xs);
+    const height = Math.max(...ys) - Math.min(...ys);
+    const shortSide = Math.min(width, height);
+    const longSide = Math.max(width, height);
 
-If no annotated boxes: {"entries":[]}`;
+    if (shortSide < 150 || longSide < 900) continue;
 
-function buildPrompt(textItems) {
-  // Only pass numeric-looking tokens — strips all label content and noise
-  const numbers = (textItems || [])
-    .filter(item => /^\d+(\.\d+)?$/.test(item.text))
-    .map(item => `  "${item.text}" at (${item.x}, ${item.y})`)
-    .join('\n');
+    rectangles.push({
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      vectorWidth: width,
+      vectorHeight: height,
+      ratio: longSide / shortSide
+    });
+  }
 
-  const textBlock = numbers.length > 0
-    ? `Numeric text items found in PDF (exact values, with page coordinates):\n${numbers}`
-    : 'No text extracted — rely on image only.';
-
-  return EXTRACT_PROMPT_BASE.replace('{TEXT_ITEMS}', textBlock);
+  await doc.destroy();
+  return rectangles.sort((left, right) => left.x - right.x || left.y - right.y);
 }
 
-async function analyzeImage(base64Image, textItems) {
-  if (!openai) throw new Error('AI fallback unavailable — set OPENAI_API_KEY to enable it.');
-  const prompt = buildPrompt(textItems);
+function dimensionCandidates(labels) {
+  const values = new Set();
+  for (const label of labels || []) {
+    const width = Number(label.widthMm);
+    const height = Number(label.heightMm);
+    if (Number.isFinite(width)) values.add(Math.round(width * 100) / 100);
+    if (Number.isFinite(height)) values.add(Math.round(height * 100) / 100);
+  }
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    max_tokens: 1024,
-    messages: [{
-      role: 'user',
-      content: [
-        {
-          type: 'image_url',
-          image_url: { url: `data:image/png;base64,${base64Image}`, detail: 'high' }
-        },
-        { type: 'text', text: prompt }
-      ]
-    }]
+  const dims = [...values].filter((value) => value > 0);
+  const pairs = [];
+  for (let i = 0; i < dims.length; i += 1) {
+    for (let j = 0; j < dims.length; j += 1) {
+      if (dims[i] <= dims[j]) continue;
+      pairs.push({
+        widthMm: dims[i],
+        heightMm: dims[j],
+        ratio: dims[i] / dims[j]
+      });
+    }
+  }
+  return pairs;
+}
+
+function geometryCorrectPayload(payload, rectangles) {
+  if (!rectangles.length || !(payload.labels || []).length) return payload;
+
+  const pairs = dimensionCandidates(payload.labels);
+  if (!pairs.length) return payload;
+
+  const candidateMatches = rectangles.flatMap((rectangle) => {
+    const longSide = Math.max(rectangle.vectorWidth, rectangle.vectorHeight);
+    const shortSide = Math.min(rectangle.vectorWidth, rectangle.vectorHeight);
+
+    return pairs.map((pair) => {
+      const ratioError = Math.abs(pair.ratio - rectangle.ratio) / rectangle.ratio;
+      const longScale = longSide / pair.widthMm;
+      const shortScale = shortSide / pair.heightMm;
+      const scale = (longScale + shortScale) / 2;
+      const scaleError = Math.abs(longScale - shortScale) / scale;
+      return { rectangle, pair, ratioError, scaleError, scale };
+    }).filter((match) => match.ratioError <= 0.07 && match.scaleError <= 0.08);
   });
 
-  const raw = response.choices[0].message.content.trim();
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-  const parsed = JSON.parse(cleaned);
-  if (!Array.isArray(parsed.entries)) throw new Error('Unexpected response shape');
-  return parsed.entries;
+  if (!candidateMatches.length) return payload;
+
+  const sortedScales = candidateMatches.map((match) => match.scale).sort((left, right) => left - right);
+  const globalScale = sortedScales[Math.floor(sortedScales.length / 2)];
+  const matched = [];
+
+  for (const rectangle of rectangles) {
+    let best = null;
+    for (const match of candidateMatches.filter((candidate) => candidate.rectangle === rectangle)) {
+      const pageScaleError = Math.abs(match.scale - globalScale) / globalScale;
+      const score = match.ratioError + match.scaleError + pageScaleError;
+      if (!best || score < best.score) best = { ...match.pair, score, scale: match.scale };
+    }
+
+    if (best) {
+      matched.push({
+        quantity: 1,
+        widthMm: best.widthMm,
+        heightMm: best.heightMm,
+        sharedDimension: false,
+        inferredDimension: 'none',
+        evidence: `Matched CAD rectangle proportion ${rectangle.ratio.toFixed(2)} and page scale ${best.scale.toFixed(2)} to ${best.widthMm} x ${best.heightMm}.`
+      });
+    }
+  }
+
+  if (!matched.length) return payload;
+
+  const originalSignature = normaliseLabels(payload.labels)
+    .map((label) => `${label.quantity}:${label.widthMm}x${label.heightMm}`)
+    .sort()
+    .join('|');
+  const corrected = normaliseLabels(matched);
+  const correctedSignature = corrected
+    .map((label) => `${label.quantity}:${label.widthMm}x${label.heightMm}`)
+    .sort()
+    .join('|');
+
+  if (corrected.length === rectangles.length && correctedSignature !== originalSignature) {
+    payload.labels = corrected;
+    payload.remarks = payload.remarks || [];
+    payload.remarks.unshift({
+      level: 'info',
+      message: 'Geometry correction used CAD rectangle proportions as the authority for shared/common dimensions.'
+    });
+  }
+
+  return payload;
 }
 
-function normaliseEntries(entries) {
-  return [...entries]
-    .sort((a, b) => a.width !== b.width ? a.width - b.width : a.height - b.height)
-    .map(({ width, height, qty }) => ({ width: Number(width), height: Number(height), qty: Number(qty) }));
+function shouldAudit(payload) {
+  const labels = payload.labels || [];
+  if (labels.length < 2) return false;
+
+  return labels.some((item) => {
+    const width = Math.max(Number(item.widthMm), Number(item.heightMm));
+    const height = Math.min(Number(item.widthMm), Number(item.heightMm));
+    return Number.isFinite(width) && Number.isFinite(height) && height <= 20 && width >= 120;
+  });
 }
 
-function entriesEqual(a, b) {
-  const na = normaliseEntries(a);
-  const nb = normaliseEntries(b);
-  if (na.length !== nb.length) return false;
-  return na.every((e, i) => e.width === nb[i].width && e.height === nb[i].height && e.qty === nb[i].qty);
+async function extractPage(client, model, pageNumber, imageDataUrl) {
+  return client.responses.create({
+    model,
+    reasoning: { effort: 'medium' },
+    input: [
+      {
+        role: 'system',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              'You extract switchboard label dimensions from CAD drawing page images.',
+              'Read dimension numbers drawn outside rectangular label borders only.',
+              'Ignore all text inside label rectangles.',
+              'Ignore small engraving/spec numbers below boxes such as 5 or 10 unless they are clearly attached to a dimension line.',
+              'Ignore finish/spec words such as 1 OFF, W-B, BLACK, WHITE, TRAFFOLYTE, and material notes.',
+              'Associate each dimension number with the dimension line and extension ticks physically attached to its label box or aligned label group.',
+              'Do not borrow a dimension from a nearby unrelated larger label just because it is close.',
+              'One external dimension line may span two or more adjacent label boxes; apply that value to every covered box.',
+              'Also handle common CAD dimensioning by alignment: if a label box has only one clear dimension, infer the missing dimension from a neighbouring label only when their relevant edges are perfectly aligned or visibly collinear.',
+              'For vertically stacked labels with perfectly aligned left and right edges, a width dimension shown for one label can apply to the aligned neighbouring labels.',
+              'For side-by-side labels with perfectly aligned top and bottom edges, a long dimension shown beside the group can apply to each aligned label in that group.',
+              'A pair of narrow/tall labels marked 15 and 30 side by side can both share the same long outside dimension, such as 250. In that case return 250 x 15 and 250 x 30.',
+              'Do not infer shared size from boxes that are merely nearby, roughly aligned, offset, staggered, or crowded with ambiguous dimension lines.',
+              'If you infer a width or height from an aligned neighbour, set inferredDimension and add a remark explaining which dimension was inherited and why.',
+              'Return one item per detected label size on the page. Combine identical sizes.',
+              'Always store the larger dimension as widthMm and the smaller as heightMm.',
+              'If a value is uncertain, include the uncertainty in evidence and lower confidence.'
+            ].join(' ')
+          }
+        ]
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              `Analyse page ${pageNumber}. Return only dimensions for label rectangles, in millimetres.`,
+              'Be especially careful with thin labels that show only a small dimension such as 15 mm while sharing the same long dimension as a perfectly aligned neighbouring label.',
+              'If a 250 x 30 label and a 15 mm label are perfectly aligned in the same side-by-side or stacked CAD group, report the second label as 250 x 15 and add a remark that the 250 was shared or inferred from common CAD dimensioning.',
+              'If a nearby 200 dimension belongs to a separate large rectangle, do not apply that 200 to the 15 mm label.'
+            ].join(' ')
+          },
+          {
+            type: 'input_image',
+            image_url: imageDataUrl,
+            detail: 'high'
+          }
+        ]
+      }
+    ],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'label_dimension_page',
+        strict: true,
+        schema
+      }
+    }
+  });
 }
 
-function sortByQtyThenArea(entries) {
-  return [...entries].sort((a, b) =>
-    b.qty !== a.qty ? b.qty - a.qty : (b.width * b.height) - (a.width * a.height)
-  );
+async function auditPage(client, model, pageNumber, imageDataUrl, initialPayload) {
+  return client.responses.create({
+    model,
+    reasoning: { effort: 'medium' },
+    input: [
+      {
+        role: 'system',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              'You are auditing extracted switchboard label dimensions against the drawing image.',
+              'Correct only dimension association mistakes. Keep correct rows unchanged.',
+              'The most important error to catch is a thin label such as 15 mm being paired with the wrong long dimension from a nearby unrelated box.',
+              'If a 15 mm and 30 mm narrow label are side by side or stacked and share the same long dimension line, both must use that long dimension.',
+              'For example, if the drawing shows adjacent labels dimensioned 15 and 30 with a shared 250 long dimension, the correct sizes are 250 x 15 and 250 x 30, not 200 x 15.',
+              'Only use shared/common dimensioning when the label boxes are perfectly aligned by their relevant edges. Add remarks for every correction or inferred/shared dimension.',
+              'Return the complete corrected page result using the schema.'
+            ].join(' ')
+          }
+        ]
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: `Audit page ${pageNumber}. Initial extraction JSON: ${JSON.stringify(initialPayload)}`
+          },
+          {
+            type: 'input_image',
+            image_url: imageDataUrl,
+            detail: 'high'
+          }
+        ]
+      }
+    ],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'label_dimension_page',
+        strict: true,
+        schema
+      }
+    }
+  });
 }
 
-app.post('/api/analyze', async (req, res) => {
-  const { pageImage, textItems, pageIndex } = req.body;
-  if (!pageImage) return res.status(400).json({ error: 'pageImage required' });
-
+app.post('/api/analyse-page', async (req, res) => {
   try {
-    const [run1, run2] = await Promise.all([
-      analyzeImage(pageImage, textItems),
-      analyzeImage(pageImage, textItems)
-    ]);
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(400).json({ error: 'OPENAI_API_KEY is missing. Create a .env file first.' });
+    }
 
-    const match = entriesEqual(run1, run2);
+    const { pageNumber, imageDataUrl, pdfDataBase64 } = req.body || {};
+    if (!imageDataUrl || !String(imageDataUrl).startsWith('data:image/')) {
+      return res.status(400).json({ error: 'A rendered page image is required.' });
+    }
 
-    res.json({
-      pageIndex,
-      status: match ? 'confirmed' : 'mismatch',
-      entries: match ? sortByQtyThenArea(run1) : null,
-      run1: sortByQtyThenArea(run1),
-      run2: sortByQtyThenArea(run2)
-    });
-  } catch (err) {
-    console.error(`Page ${pageIndex} error:`, err.message);
-    res.json({
-      pageIndex,
-      status: 'error',
-      error: err.message || 'Analysis failed'
-    });
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const model = process.env.OPENAI_MODEL || 'gpt-5.4';
+
+    const response = await extractPage(client, model, pageNumber, imageDataUrl);
+    const rectangles = await extractVectorRectangles(pdfDataBase64, pageNumber).catch(() => []);
+    let payload = JSON.parse(response.output_text);
+    payload.labels = normaliseLabels(payload.labels);
+    payload.pageNumber = Number(pageNumber || payload.pageNumber || 1);
+    payload.remarks = payload.remarks || [];
+
+    if (shouldAudit(payload)) {
+      const auditResponse = await auditPage(client, model, pageNumber, imageDataUrl, payload);
+      const audited = JSON.parse(auditResponse.output_text);
+      audited.labels = normaliseLabels(audited.labels);
+      audited.pageNumber = Number(pageNumber || audited.pageNumber || 1);
+      audited.remarks = audited.remarks || [];
+      audited.remarks.unshift({
+        level: 'info',
+        message: 'Automatic audit pass checked thin-label/common-dimension association.'
+      });
+      payload = audited;
+    }
+
+    payload = geometryCorrectPayload(payload, rectangles);
+    res.json(payload);
+  } catch (error) {
+    const message = error?.response?.data?.error?.message || error?.message || 'Analysis failed.';
+    res.status(500).json({ error: message });
   }
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Relec Invoicer running at http://localhost:${PORT}`));
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    model: process.env.OPENAI_MODEL || 'gpt-5.4',
+    hasKey: Boolean(process.env.OPENAI_API_KEY)
+  });
+});
+
+app.listen(port, () => {
+  console.log(`Label dimension extractor running at http://localhost:${port}`);
+});
