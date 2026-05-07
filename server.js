@@ -1,18 +1,17 @@
 const express = require('express');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const path = require('path');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-if (!process.env.GEMINI_API_KEY) {
-  console.error('ERROR: GEMINI_API_KEY environment variable is not set.');
+if (!process.env.OPENAI_API_KEY) {
+  console.error('ERROR: OPENAI_API_KEY environment variable is not set.');
   process.exit(1);
 }
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const openai = new OpenAI();
 
 const EXTRACT_PROMPT = `You are analyzing a page from an engineering drawing of switchboard label layouts.
 
@@ -42,12 +41,22 @@ If no dimension annotations are found anywhere on the page, return:
 {"entries":[]}`;
 
 async function analyzeImage(base64Image) {
-  const result = await model.generateContent([
-    { inlineData: { data: base64Image, mimeType: 'image/png' } },
-    EXTRACT_PROMPT
-  ]);
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    max_tokens: 1024,
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'image_url',
+          image_url: { url: `data:image/png;base64,${base64Image}`, detail: 'high' }
+        },
+        { type: 'text', text: EXTRACT_PROMPT }
+      ]
+    }]
+  });
 
-  const raw = result.response.text().trim();
+  const raw = response.choices[0].message.content.trim();
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   const parsed = JSON.parse(cleaned);
   if (!Array.isArray(parsed.entries)) throw new Error('Unexpected response shape');
