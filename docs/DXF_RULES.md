@@ -1,52 +1,67 @@
 # DXF Rules
 
-DXF is the preferred input because it lets RELinvoicer inspect the CAD drawing itself instead of guessing from an image.
+This document explains how RELinvoicer reads DXF files.
 
-## Entities The App Uses
+## Main Rule
 
-The current DXF parser uses:
+DXF geometry is the authority.
+
+The app should trust the drawn label rectangle more than nearby annotation placement.
+
+## Entities Used
+
+RELinvoicer reads:
 
 - `LWPOLYLINE` for label rectangles,
 - `DIMENSION` for measured side values,
 - `TEXT` and `MTEXT` for quantity notes.
 
-## Rectangle Rules
+## Rectangle Detection
 
-A shape is considered a candidate label when:
+A rectangle is considered a label candidate when:
 
 - it is a closed `LWPOLYLINE`,
 - it has four corner points,
 - its sides are horizontal and vertical,
-- its long and short sides match drawing dimension values,
+- its side lengths match dimension values,
 - its size is within the expected label range.
 
-The dimension match is important. It keeps the app from counting title blocks, tables, and random drawing boxes.
+Dimension matching helps avoid counting title blocks, tables, and unrelated boxes.
 
-## Size Rules
+## Width And Height
 
-The app stores dimensions like this:
+The larger side becomes `Width X`.
 
-```text
-larger side  -> Width X
-smaller side -> Height Y
-```
+The smaller side becomes `Height Y`.
 
-So a rectangle may be drawn or returned as `15 x 250`, but the final table shows:
+Example:
 
 ```text
-250    15
+15 x 250 -> 250 x 15
 ```
 
-Small labels are allowed when they are supported by drawing dimensions. This includes sizes such as:
+## Shared Dimensions
+
+Some CAD drawings show one dimension line for two nearby labels.
+
+RELinvoicer handles this by measuring the rectangles themselves.
+
+If two rectangles are truly the same width, the geometry can show that even when only one printed dimension is nearby.
+
+## Small Labels
+
+Small labels are allowed when the drawing supports them with dimensions.
+
+Examples:
 
 ```text
 16 x 8
 16 x 16
 ```
 
-## Quantity Rules
+## Quantity Notes
 
-One drawn rectangle counts as quantity `1` unless nearby quantity text says otherwise.
+One drawn rectangle counts as quantity `1` unless nearby text says otherwise.
 
 Supported examples:
 
@@ -67,23 +82,15 @@ Example:
 one 80 x 20 rectangle with "2 OFF" = 2 labels
 ```
 
-If another `80 x 20` rectangle appears elsewhere, the final quantity is added together.
-
-## What Counts As Nearby
-
-The app looks for quantity text close to the rectangle, with a preference for notes to the right of, below, or inside the same local label area.
-
-This matches the current sample drawings, but it is still a drawing convention. If a future drawing puts quantity notes far away, the parser may need another rule.
-
 ## Known Limits
 
-The parser is intentionally strict. It may skip labels when:
+The parser may skip labels when:
 
 - rectangles are exploded into separate `LINE` entities,
 - rectangles are not closed,
 - labels are rotated at unusual angles,
-- dimensions are missing or exploded into plain lines and text,
-- a real label rectangle has no matching dimension value,
-- non-label boxes are dimensioned exactly like labels.
+- dimensions are missing,
+- dimensions are exploded into plain lines and text,
+- a real label rectangle has no matching dimension value.
 
-The safest CAD export for this app is a DXF with closed label polylines and real `DIMENSION` entities.
+The safest export is a DXF with closed label polylines and real `DIMENSION` entities.

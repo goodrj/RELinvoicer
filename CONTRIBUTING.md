@@ -2,50 +2,68 @@
 
 Thanks for improving RELinvoicer.
 
-This project is intentionally small and practical. A good change should make the app easier to trust, easier to run, or easier to understand.
+This project tries to stay simple enough for a beginner to understand and useful enough for a real manufacturing workflow.
 
-## Before You Change Code
-
-Run:
+## Development Setup
 
 ```powershell
+git clone https://github.com/goodrj/RELinvoicer.git
+cd "C:\path\to\RELinvoicer"
 npm install
-npm run check
-npm run smoke
 ```
 
-## Development Loop
-
-1. Start the app:
+## Run Locally
 
 ```powershell
+cd "C:\path\to\RELinvoicer"
 npm start
 ```
 
-2. Open:
+Open:
 
 ```text
 http://localhost:3192
 ```
 
-3. Test with a real DXF drawing.
-4. If you changed PDF fallback behavior, also test with a real CAD-exported PDF.
-
 ## Code Style
 
-- Keep functions small enough to explain.
-- Prefer clear names over clever names.
-- Add comments only around non-obvious logic.
-- Do not commit `.env`, API keys, logs, exported spreadsheets, or sample customer drawings.
-- Keep documentation plain enough for a new apprentice to understand.
+- Keep the app local-first and dependency-light.
+- Prefer plain names over clever names.
+- Make dashboard text short and clear.
 - Prefer DXF geometry as the authority when extraction rules disagree.
+- Keep extraction rules conservative and readable.
+- Do not commit `.env`, API keys, logs, exported spreadsheets, or sample customer drawings.
+
+## Documentation Style
+
+- Write for a smart beginner.
+- Explain what a control does before explaining how it works.
+- Use complete PowerShell commands.
+- Avoid unexplained acronyms.
+- Update `CHANGELOG.md` when behavior changes.
+- Update `docs/USER_GUIDE.md` when dashboard controls change.
+- Update `docs/DXF_RULES.md` when DXF extraction assumptions change.
+- Update `docs/TROUBLESHOOTING.md` when new errors are discovered.
+
+## Validation
+
+Before committing:
+
+```powershell
+cd "C:\path\to\RELinvoicer"
+npm run check
+npm run smoke
+```
+
+For extraction changes, test with representative real DXF drawings.
 
 ## Pull Request Checklist
 
 - The app starts.
 - `npm run check` passes.
 - `npm run smoke` passes.
-- The README or docs are updated if behavior changes.
+- Docs match the UI.
 - DXF extraction changes are tested against representative real drawings.
 - Any AI prompt change is tested with at least one real PDF fallback drawing.
-- New assumptions are documented in `docs/DXF_RULES.md` or `docs/HOW_IT_WORKS.md`.
+- No local data or customer drawings are committed.
+- The change is explained in plain language.

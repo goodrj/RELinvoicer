@@ -14,3 +14,4 @@
 - Added TSV copy and Excel export.
 - Added beginner-friendly documentation and smoke-test tooling.
 - Documented the DXF-first workflow, supported quantity formats, validation expectations, and privacy model.
+- Reworked the documentation set to match the LingBot beginner-friendly repo structure.

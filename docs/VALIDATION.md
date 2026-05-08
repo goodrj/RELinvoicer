@@ -2,7 +2,7 @@
 
 This project is validated against real switchboard label DXF samples supplied during development.
 
-The goal of these notes is not to expose customer drawings. It is to document the kinds of cases the app is expected to handle.
+The goal of this document is to describe expected behavior without uploading private customer drawings.
 
 ## Covered Cases
 
@@ -17,7 +17,7 @@ The current parser has been checked against drawings containing:
 - grouped duplicate label sizes,
 - mixed label sizes on the same drawing.
 
-## Example Expected Outputs
+## Example Output
 
 For a drawing with a shared `250 mm` long side and a quantity note on the `80 x 20` label:
 
@@ -30,7 +30,7 @@ Quantity    Width X (mm)    Height Y (mm)
 2           80              20
 ```
 
-For drawings with very small labels, expected rows include:
+For drawings with very small labels, expected rows can include:
 
 ```text
 2           16              16
@@ -39,14 +39,29 @@ For drawings with very small labels, expected rows include:
 
 ## Local Checks
 
-Before pushing changes, run:
+Run:
 
 ```powershell
+cd "C:\path\to\RELinvoicer"
 npm run check
 npm run smoke
 ```
 
-For extraction logic changes, also test with representative DXF files and compare the app table against the drawing manually.
+Expected result:
+
+```text
+No syntax errors, and smoke test passed
+```
+
+## Manual Drawing Check
+
+For extraction logic changes:
+
+1. Upload representative DXF files.
+2. Compare every result row with the drawing.
+3. Check quantity notes.
+4. Check small labels.
+5. Check the total label count.
 
 ## Accuracy Principle
 

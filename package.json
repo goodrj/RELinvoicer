@@ -2,6 +2,7 @@
   "name": "relinvoicer",
   "version": "1.0.0",
   "description": "Local DXF-first switchboard label dimension extractor with PDF vision fallback.",
+  "main": "server.js",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,5 +16,22 @@
     "express": "^4.21.2",
     "openai": "^6.36.0",
     "pdfjs-dist": "^5.7.284"
-  }
+  },
+  "keywords": [
+    "dxf",
+    "cad",
+    "switchboard",
+    "labels",
+    "local-first"
+  ],
+  "author": "Revi James",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/goodrj/RELinvoicer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/goodrj/RELinvoicer/issues"
+  },
+  "homepage": "https://github.com/goodrj/RELinvoicer#readme"
 }

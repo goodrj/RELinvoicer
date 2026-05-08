@@ -1,45 +1,34 @@
 # User Guide
 
-This guide is for the person using the app on real label drawings. No coding knowledge is needed.
+This guide explains the RELinvoicer dashboard.
 
-## Start The App
+## Upload Area
 
-Open PowerShell in the project folder and run:
+Drop a DXF or PDF file onto the upload area.
 
-```powershell
-npm start
-```
+You can also click the upload area and choose a file.
 
-Then open:
+Use DXF whenever possible. DXF contains CAD geometry, so it is more reliable than PDF.
 
-```text
-http://localhost:3192
-```
+## Preview
 
-If port `3192` is already in use, see [Troubleshooting](TROUBLESHOOTING.md).
+After upload, the app shows a preview.
 
-## Best File To Upload
+For DXF, the preview confirms the file was accepted.
 
-Use DXF whenever possible.
+For PDF, the preview shows page thumbnails.
 
-DXF contains the actual CAD rectangles and dimensions, so it is more reliable than asking AI to read a picture. PDF is still supported when a DXF is not available.
+## Analyse Button
 
-For DXF files, you do not need an OpenAI API key.
+Click **Analyse** after the file is loaded.
 
-For PDF files, the app needs `OPENAI_API_KEY` in `.env`.
+While analysis is running, the status area shows that analysis is ongoing and displays elapsed time.
 
-## Analyse A Drawing
+Do not refresh the page while analysis is running.
 
-1. Drag the DXF or PDF onto the upload box, or click the box and choose a file.
-2. Wait for the preview to appear.
-3. Click `Analyse`.
-4. Watch the status area. It will show that analysis is ongoing and display elapsed time.
-5. Read the result table.
-6. Check the remarks area if it appears.
+## Result Table
 
-## Understand The Result
-
-Each row means:
+The result table has three columns:
 
 ```text
 Quantity    Width X (mm)    Height Y (mm)
@@ -53,49 +42,32 @@ Example:
 
 This means two labels are `80 mm` wide and `20 mm` high.
 
-The app always stores the larger value as `Width X` and the smaller value as `Height Y`.
+The larger number is always shown as `Width X`. The smaller number is always shown as `Height Y`.
 
-## Quantity Notes
+## Total Row
 
-If a DXF has quantity text near a rectangle, the app applies that quantity to the rectangle before grouping the final answer.
+The table shows a total label count at the bottom.
 
-Examples the app understands:
+The total is the sum of the quantity column.
 
-```text
-2 OFF
-2 OFF EACH
-2 ONLY
-4 REQUIRED
-QTY: 3
-QUANTITY: 4 ONLY
-```
+## Remarks
 
-If the same label size appears in several places, the final table adds them together.
+Remarks are notes from the app.
 
-## What Remarks Mean
+They may explain:
 
-Remarks are not errors. They are the app saying, "I used extra judgement here."
+- how many DXF rectangles were used,
+- whether quantity notes were found,
+- whether PDF geometry correction was used,
+- whether the result needs extra attention.
 
-Examples:
+Remarks are not always errors. They are there so you can see what judgement the app used.
 
-```text
-DXF analysis used 5 closed label rectangles and 10 dimension values.
-Geometry correction used CAD rectangle proportions as the authority.
-```
+## Copy TSV
 
-Always read remarks when the drawing is crowded, uses shared dimensions, or contains unusual labels.
+Click **Copy TSV** when you want to paste into Excel or Google Sheets.
 
-## Understand The Timer
-
-While the app is analysing, the status box shows the ongoing run and elapsed time.
-
-When analysis finishes, the final time stays on screen so you can see how long the run took.
-
-## Export Results
-
-Use `Copy TSV` when you want to paste straight into Excel or Google Sheets.
-
-`Copy TSV` copies only the numeric result rows:
+It copies only the numeric rows:
 
 ```text
 1    250    30
@@ -103,29 +75,34 @@ Use `Copy TSV` when you want to paste straight into Excel or Google Sheets.
 2    80     20
 ```
 
-It does not copy the table header or total row.
+It does not copy the header row or total row.
 
-Use `Export Excel` when you want an `.xlsx` file. The Excel export includes a totals row.
+## Export Excel
 
-## Re-Analyse One PDF Page
+Click **Export Excel** when you want an `.xlsx` file.
 
-PDF fallback analysis can be re-run per page.
+The Excel export includes:
 
-If one PDF page looks wrong:
+- quantity,
+- width,
+- height,
+- totals row.
 
-1. Find the page thumbnail.
-2. Click `Re-analyse`.
-3. If the new result differs from the old one, choose which version to keep.
+## Re-Analyse
 
-DXF analysis normally does not need this because it reads CAD entities directly.
+PDF pages can be re-analysed if a result looks wrong.
+
+If a re-analysis result disagrees with the first result, the app lets you choose which result to keep.
+
+DXF analysis normally does not need re-analysis because it reads CAD entities directly.
 
 ## When To Double-Check Manually
 
-Always double-check if:
+Always double-check before production if:
 
-- the drawing is very crowded,
-- a rectangle is not a clean closed CAD shape,
-- a dimension is missing,
-- the remarks mention uncertainty,
-- the total quantity looks too high or too low,
-- the file is a PDF rather than a DXF.
+- the file is a PDF,
+- the drawing is crowded,
+- a rectangle is not closed,
+- a quantity note is far from the label,
+- dimensions are missing,
+- the total quantity looks wrong.

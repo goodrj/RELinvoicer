@@ -1,31 +1,57 @@
-# Security
+# Security Notes
 
-## API Keys
+RELinvoicer is a local drawing-analysis tool. It should only be used with drawings the user is allowed to process.
 
-Put your OpenAI API key in `.env`.
+## Sensitive Local Data
 
-Do not commit `.env`.
+The `.env` file can contain:
 
-The browser never receives the API key. The local Node server reads it and sends requests to OpenAI.
+- OpenAI API keys.
 
-## Drawing Data
+Do not commit or upload `.env`.
 
-This app does not save uploaded drawings.
+## Credentials
 
-During analysis:
+RELinvoicer does not ask for passwords.
 
-- DXF files are sent from the browser to the local backend and analysed locally,
-- PDF files are rendered into page images by the browser,
-- PDF page images are sent from the browser to the local backend,
-- the backend sends PDF page images to OpenAI for vision analysis,
-- the backend reads PDF vector rectangles locally for geometry correction.
+For PDF fallback, the local Node server reads `OPENAI_API_KEY` from `.env` and sends requests to OpenAI.
 
-DXF analysis does not use OpenAI.
+The browser never receives the API key.
 
-Only use PDF fallback with drawings you are allowed to send to OpenAI.
+## Network Scope
 
-## Reporting Problems
+The dashboard is served locally at:
 
-If this repo is private, create a GitHub issue or contact the maintainer directly.
+```text
+http://localhost:3192
+```
 
-If this repo is public, avoid posting private drawings, API keys, customer names, or switchboard details in an issue.
+DXF analysis runs locally.
+
+PDF fallback sends rendered page images to OpenAI vision. Only use PDF fallback with drawings you are allowed to send to OpenAI.
+
+## Recommended Use
+
+- Run the app only on trusted machines.
+- Keep the terminal open only while actively using the dashboard.
+- Prefer DXF for local analysis.
+- Review exported results before production use.
+- Do not share private drawings, API keys, or customer details.
+
+## What Not To Upload
+
+Never upload:
+
+```text
+.env
+*.log
+private customer drawings
+```
+
+These can contain keys, local error details, or confidential project information.
+
+## Reporting Security Issues
+
+Do not post API keys, private drawings, customer names, or switchboard details in public issues.
+
+Instead, share a minimal description of the problem and remove private details from logs or screenshots.
